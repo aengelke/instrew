@@ -1,0 +1,6 @@
+[submodule "subprojects/rellume"]
+	path = subprojects/rellume
+	url = https://github.com/aengelke/rellume.git
+[submodule "subprojects/fadec"]
+	path = subprojects/fadec
+	url = https://github.com/aengelke/fadec.git
