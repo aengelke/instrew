@@ -1,5 +1,7 @@
 # Instrew — LLVM-based Dynamic Binary Instrumentation
 
+[![Build Status](https://github.com/aengelke/instrew/workflows/CI/badge.svg)](https://github.com/aengelke/instrew/actions?query=workflow%3ACI)
+
 Instrew is a performance-targeted transparent dynamic binary rewriter/instrumenter based on LLVM targeting x86-64. The original code is lifted to LLVM-IR using [Rellume](https://github.com/aengelke/rellume), where it can be modified and from which new machine code is generated using LLVM's MCJIT compiler.
 
 ### Architecture
