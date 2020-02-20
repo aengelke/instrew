@@ -4,6 +4,7 @@
 #include "connection.h"
 #include "optimizer.h"
 
+#include <fadec.h>
 #include <rellume/rellume.h>
 
 #include <llvm/ADT/SmallVector.h>
@@ -24,8 +25,6 @@
 
 
 #define SPTR_ADDR_SPACE 1
-
-static LLDecodeStop opt_decode_stop = RELLUME_DECODE_ALL;
 
 struct StructOff {
     struct Entry {
@@ -135,11 +134,11 @@ int main(int argc, char** argv) {
     ll_config_set_hhvm(rlcfg, server_config.hhvm);
     ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
     ll_config_enable_overflow_intrinsics(rlcfg, false);
-    ll_config_set_instr_impl(rlcfg, LL_INS_SYSCALL, llvm::wrap(syscall_fn));
-    ll_config_set_instr_impl(rlcfg, LL_INS_CPUID, llvm::wrap(cpuid_fn));
-    ll_config_set_instr_impl(rlcfg, LL_INS_RDTSC, llvm::wrap(rdtsc_fn));
-    ll_config_set_instr_impl(rlcfg, LL_INS_FLDCW, llvm::wrap(noop_fn));
-    ll_config_set_instr_impl(rlcfg, LL_INS_LDMXCSR, llvm::wrap(noop_fn));
+    ll_config_set_instr_impl(rlcfg, FDI_SYSCALL, llvm::wrap(syscall_fn));
+    ll_config_set_instr_impl(rlcfg, FDI_CPUID, llvm::wrap(cpuid_fn));
+    ll_config_set_instr_impl(rlcfg, FDI_RDTSC, llvm::wrap(rdtsc_fn));
+    ll_config_set_instr_impl(rlcfg, FDI_FLDCW, llvm::wrap(noop_fn));
+    ll_config_set_instr_impl(rlcfg, FDI_LDMXCSR, llvm::wrap(noop_fn));
 
     auto mem_acc = [](size_t addr, uint8_t* buf, size_t buf_sz, void* user_arg) {
         Conn* conn = static_cast<Conn*>(user_arg);
@@ -192,7 +191,12 @@ int main(int argc, char** argv) {
                 time_lifting_start = std::chrono::steady_clock::now();
 
             LLFunc* rlfn = ll_func_new(llvm::wrap(&mod), rlcfg);
-            ll_func_decode3(rlfn, addr, opt_decode_stop, mem_acc, &conn);
+            bool decode_fail = ll_func_decode_cfg(rlfn, addr, mem_acc, &conn);
+            if (decode_fail) {
+                std::cerr << "error: could not decode at 0x" << std::hex << addr
+                          << std::endl;
+                return 1;
+            }
             llvm::Function* fn = llvm::unwrap<llvm::Function>(ll_func_lift(rlfn));
             ll_func_dispose(rlfn);
 
