@@ -131,6 +131,7 @@ int main(int argc, char** argv) {
     ll_config_enable_verify_ir(rlcfg, false);
     ll_config_set_call_ret_clobber_flags(rlcfg, server_config.opt_unsafe_callret);
     ll_config_set_use_native_segment_base(rlcfg, server_config.native_segments);
+    ll_config_set_position_independent_code(rlcfg, false);
     ll_config_set_hhvm(rlcfg, server_config.hhvm);
     ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
     ll_config_enable_overflow_intrinsics(rlcfg, false);

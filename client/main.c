@@ -148,7 +148,8 @@ resolve:
 
     register uintptr_t reg_r12 __asm__("r12") = (uintptr_t) cpu_state;
     register uintptr_t reg_r11 __asm__("r11") = (uintptr_t) quick_tlb;
-    register uintptr_t reg_rbx __asm__("rbx") = (uintptr_t) &quick_tlb[hash];
+    register uintptr_t reg_rbx __asm__("rbx") = addr;
+    register uintptr_t reg_r14 __asm__("r14") = (uintptr_t) &quick_tlb[hash];
     register uint64_t guest_rax __asm__("rax") = cpu_state[1];
     register uint64_t guest_rcx __asm__("rcx") = cpu_state[2];
     register uint64_t guest_rdx __asm__("rdx") = cpu_state[3];
@@ -162,12 +163,11 @@ resolve:
     register uint64_t guest_r10 __asm__("r10") = cpu_state[11];
     __asm__ volatile(
             "push %%r11;"
-            "mov %%rbx, %%r14;" // Pointer to quick_tlb entry stored in r14
             "mov 0x60(%%r12), %%r11;" // Load guest r11
             ".align 16;"
         "1:"
-            "mov 8(%%r14), %%rbx;" // Load new addr from quick_t;b
-            "call *%%rbx;" // Address is stored in rbx now
+            "mov 8(%%r14), %%r14;" // Load new addr from quick_tlb, keep rbx
+            "call *%%r14;" // Old RIP and new RIP stored in rbx
             "lea (,%%rbx,4), %%r14;"
             "and %[quick_tlb_mask], %%r14;"
             "add (%%rsp), %%r14;" // r14 is now the pointer to the TLB entry
@@ -180,11 +180,11 @@ resolve:
           "+r"(guest_rax), "+r"(guest_rcx), "+r"(guest_rdx), "+r"(guest_rbx),
           "+r"(guest_rsp), "+r"(guest_rbp), "+r"(guest_rsi), "+r"(guest_rdi),
           "+r"(guest_r8), "+r"(guest_r9), "+r"(guest_r10)
-        : "r"(reg_r11), "r"(reg_r12),
+        : "r"(reg_r11), "r"(reg_r12), "r"(reg_r14),
           [quick_tlb_mask] "i"(((1 << QUICK_TLB_BITS) - 1) << 4)
         : "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
           "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
-          "cc", "memory", "r14"
+          "cc", "memory"
     );
 
     addr = reg_rbx;
