@@ -199,8 +199,8 @@ int translator_get(Translator* t, uintptr_t addr, void** out_obj,
             return -1;
         if ((ret = read_full(t->rd_fd, &memrq, sizeof(memrq))) != sizeof(memrq))
             return ret;
-        if (memrq.buf_sz > 32)
-            memrq.buf_sz = 32;
+        if (memrq.buf_sz > 0x1000)
+            memrq.buf_sz = 0x1000;
 
         hdr.id = MSGID_C_MEMBUF;
         hdr.sz = memrq.buf_sz + 1; // add additional status code

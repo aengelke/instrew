@@ -22,6 +22,7 @@
 #include <iostream>
 #include <unistd.h>
 #include <sstream>
+#include <unordered_map>
 
 
 #define SPTR_ADDR_SPACE 1
@@ -79,6 +80,64 @@ static llvm::Function* CreateRdtscFn(llvm::Module* mod) {
     });
 }
 
+class RemoteMemory {
+private:
+    const static size_t PAGE_SIZE = 0x1000;
+    using Page = std::array<uint8_t, PAGE_SIZE>;
+    std::unordered_map<uint64_t, std::unique_ptr<Page>> page_cache;
+    Conn& conn;
+
+public:
+    RemoteMemory(Conn& c) : conn(c) {}
+
+private:
+    Page* GetPage(size_t page_addr) {
+        const auto& page_it = page_cache.find(page_addr);
+        if (page_it != page_cache.end())
+            return page_it->second.get();
+
+        struct { uint64_t addr; size_t buf_sz; } send_buf{page_addr, PAGE_SIZE};
+        conn.SendMsg(Msg::S_MEMREQ, send_buf);
+
+        Msg::Id msgid = conn.RecvMsg();
+        std::size_t msgsz = conn.Remaining();
+
+        // Sanity checks.
+        if (msgid != Msg::C_MEMBUF)
+            return nullptr;
+        if (msgsz != PAGE_SIZE + 1)
+            return nullptr;
+
+        auto page = std::make_unique<Page>();
+        conn.Read(page->data(), page->size());
+
+        uint8_t failed = conn.Read<uint8_t>();
+        if (failed)
+            return nullptr;
+
+        page_cache[page_addr] = std::move(page);
+
+        return page_cache[page_addr].get();
+    };
+
+public:
+    size_t Get(size_t start, size_t end, uint8_t* buf) {
+        size_t start_page = start & ~(PAGE_SIZE - 1);
+        size_t end_page = end & ~(PAGE_SIZE - 1);
+        size_t bytes_written = 0;
+        for (size_t cur = start_page; cur <= end_page; cur += PAGE_SIZE) {
+            Page* page = GetPage(cur);
+            if (!page)
+                break;
+            size_t start_off = cur < start ? (start & (PAGE_SIZE - 1)) : 0;
+            size_t end_off = cur + PAGE_SIZE > end ? (end & (PAGE_SIZE - 1)) : PAGE_SIZE;
+            std::copy(page->data() + start_off, page->data() + end_off, buf + bytes_written);
+            bytes_written += end_off - start_off;
+        }
+        return bytes_written;
+    }
+};
+
 int main(int argc, char** argv) {
     if (argc > 1) {
         std::cerr << "usage: " << argv[0] << std::endl;
@@ -103,6 +162,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     server_config.ReadFromConn(conn);
+
+    RemoteMemory remote_memory(conn);
 
     llvm::cl::ParseEnvironmentOptions(argv[0], "INSTREW_SERVER_LLVM_OPTS");
     llvm::TimePassesIsEnabled = server_config.debug_time_passes;
@@ -141,30 +202,6 @@ int main(int argc, char** argv) {
     ll_config_set_instr_impl(rlcfg, FDI_FLDCW, llvm::wrap(noop_fn));
     ll_config_set_instr_impl(rlcfg, FDI_LDMXCSR, llvm::wrap(noop_fn));
 
-    auto mem_acc = [](size_t addr, uint8_t* buf, size_t buf_sz, void* user_arg) {
-        Conn* conn = static_cast<Conn*>(user_arg);
-
-        struct { uint64_t addr; size_t buf_sz; } send_buf{addr, buf_sz};
-        conn->SendMsg(Msg::S_MEMREQ, send_buf);
-
-        Msg::Id msgid = conn->RecvMsg();
-        std::size_t msgsz = conn->Remaining();
-
-        // Sanity checks.
-        if (msgid != Msg::C_MEMBUF)
-            return size_t{0};
-        if (msgsz < 1 || msgsz > buf_sz + 1)
-            return size_t{0};
-
-        conn->Read(buf, msgsz - 1);
-
-        uint8_t failed = conn->Read<uint8_t>();
-        if (failed)
-            return size_t{0};
-
-        return msgsz - 1;
-    };
-
     while (true) {
         Msg::Id msgid = conn.RecvMsg();
         if (msgid == Msg::C_EXIT) {
@@ -192,7 +229,12 @@ int main(int argc, char** argv) {
                 time_lifting_start = std::chrono::steady_clock::now();
 
             LLFunc* rlfn = ll_func_new(llvm::wrap(&mod), rlcfg);
-            bool decode_fail = ll_func_decode_cfg(rlfn, addr, mem_acc, &conn);
+            bool decode_fail = ll_func_decode_cfg(rlfn, addr,
+                [](size_t addr, uint8_t* buf, size_t buf_sz, void* user_arg) {
+                    auto* rm = static_cast<RemoteMemory*>(user_arg);
+                    return rm->Get(addr, addr + buf_sz, buf);
+                },
+                &remote_memory);
             if (decode_fail) {
                 std::cerr << "error: could not decode at 0x" << std::hex << addr
                           << std::endl;
