@@ -16,9 +16,6 @@ public:
                           INSTREW_DESC_CACHABLE;
         out_desc->name = "None";
         out_desc->uuid = "e023b8a9-b7e3-485f-9da3-916abd356798";
-        out_desc->hook_instr = nullptr;
-        out_desc->hook_basic_block = nullptr;
-        out_desc->hook_sp_write = nullptr;
     }
 
     ~InstrumenterNone() {}

@@ -21,6 +21,20 @@ enum InstrewDescFlags {
     /// A recompilation is guaranteed to be triggered, if the instrumenter UUID
     /// or the configuration string changes.
     INSTREW_DESC_CACHABLE = 1 << 2,
+
+    /// Whether to add calls to a marker function (named `instrew_instr_marker`)
+    /// before each instruction. The first argument is the `rip` (pointing to
+    /// the end of the instruction), the second argument is the decoded FdInstr.
+    /// The end of the instruction in the LLVM-IR is either indicated by another
+    /// call to this function or the exit basic block. All calls to this
+    /// function must be removed during instrumentation.
+    INSTREW_DESC_MARK_INSTRS = 1 << 3,
+
+    /// Whether to add calls to a marker function (named `instrew_write_sp`)
+    /// whenever the stack pointer (`rsp`) is written. The arguments are the old
+    /// and new value, respectively. All calls to this function must be removed
+    /// during instrumentation.
+    INSTREW_DESC_TRACK_SP = 1 << 4,
 };
 
 struct InstrewDesc {
@@ -46,21 +60,6 @@ struct InstrewDesc {
     /// be identical and the old function must be deleted. This function must
     /// not add new LLVM functions to the module.
     LLVMValueRef( *instrument)(void* handle, LLVMValueRef function);
-
-    /// If not NULL, a call to this function (`void %fn(metadata fd_instr)`)
-    /// gets inserted before a machine instruction. The end of the instruction
-    /// in the LLVM-IR is either indicated by another call to this function or
-    /// the end of the basic block.
-    LLVMValueRef hook_instr;
-    /// If not NULL, a call to this function (`void %fn(metadata fd_instrs)`)
-    /// gets inserted at the beginning of a basic block. The end of the
-    /// architectural basic block is either indicated by another call to this
-    /// function or by the exit block, which can be identified by being ended
-    /// with a `ret` instruction.
-    LLVMValueRef hook_basic_block;
-    /// If not NULL, a call to this function (`void %fn(i64 old, i64 new)`) gets
-    /// inserted when the stack pointer is modified.
-    LLVMValueRef hook_sp_write;
 };
 
 /// Configure the rewriter with a given configuration fill out the descriptor
