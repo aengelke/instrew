@@ -5,6 +5,7 @@
 #include "optimizer.h"
 
 #include <fadec.h>
+#include <instrew-api.h>
 #include <rellume/rellume.h>
 
 #include <llvm/ADT/SmallVector.h>
@@ -18,6 +19,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
+#include <dlfcn.h>
 #include <fstream>
 #include <iostream>
 #include <unistd.h>
@@ -138,6 +140,58 @@ public:
     }
 };
 
+class InstrumenterTool {
+private:
+    void* dl_handle;
+    void* tool_handle;
+    InstrewDesc desc;
+
+public:
+    InstrumenterTool() : dl_handle(nullptr), desc{} {}
+    ~InstrumenterTool() {
+        if (desc.finalize)
+            desc.finalize(tool_handle);
+        if (dl_handle)
+            dlclose(dl_handle);
+    }
+
+    int Init(const ServerConfig& server_config, llvm::Module* mod) {
+        if (server_config.tool == "") {
+            std::cerr << "error: no tool specified" << std::endl;
+            return -EINVAL;
+        }
+        dl_handle = dlopen(server_config.tool.c_str(), RTLD_NOW);
+        if (!dl_handle) {
+            std::cerr << "error: could not open tool: " << dlerror() << std::endl;
+            return -ELIBBAD;
+        }
+        decltype(instrew_init_instrumenter)* tool_func;
+        *((void**) &tool_func) = dlsym(dl_handle, "instrew_init_instrumenter");
+        if (!tool_func) {
+            std::cerr << "error: could not open tool: " << dlerror() << std::endl;
+            return -ELIBBAD;
+        }
+
+        tool_handle = tool_func(server_config.tool_config.c_str(),
+                                llvm::wrap(mod), &desc);
+        if (desc.magic != 0xAEDB1000) {
+            std::cerr << "error: incompatible tool" << std::endl;
+            return -EINVAL;
+        }
+
+        return 0;
+    }
+
+    llvm::Function* Instrument(llvm::Function* fn) {
+        LLVMValueRef new_fn = desc.instrument(tool_handle, llvm::wrap(fn));
+        return llvm::unwrap<llvm::Function>(new_fn);
+    }
+
+    bool Optimize() {
+        return !!(desc.flags & INSTREW_DESC_OPTIMIZE);
+    }
+};
+
 int main(int argc, char** argv) {
     if (argc > 1) {
         std::cerr << "usage: " << argv[0] << std::endl;
@@ -151,6 +205,7 @@ int main(int argc, char** argv) {
 
     // Measured times
     std::chrono::steady_clock::duration dur_lifting{};
+    std::chrono::steady_clock::duration dur_instrument{};
     std::chrono::steady_clock::duration dur_llvm_opt{};
     std::chrono::steady_clock::duration dur_llvm_codegen{};
 
@@ -178,6 +233,10 @@ int main(int argc, char** argv) {
     // Create module, functions will be deleted after code generation.
     llvm::LLVMContext ctx;
     llvm::Module mod("mod", ctx);
+
+    InstrumenterTool tool;
+    if (tool.Init(server_config, &mod) != 0)
+        return 1;
 
     // Add syscall implementation to module
     auto syscall_fn = CreateFunc(&mod, "syscall");
@@ -209,6 +268,8 @@ int main(int argc, char** argv) {
                 std::cerr << "Server profile: "
                           << std::chrono::duration_cast<std::chrono::milliseconds>(dur_lifting).count()
                           << "ms lifting; "
+                          << std::chrono::duration_cast<std::chrono::milliseconds>(dur_instrument).count()
+                          << "ms instrumentation; "
                           << std::chrono::duration_cast<std::chrono::milliseconds>(dur_llvm_opt).count()
                           << "ms llvm_opt; "
                           << std::chrono::duration_cast<std::chrono::milliseconds>(dur_llvm_codegen).count()
@@ -256,7 +317,23 @@ int main(int argc, char** argv) {
                 fn->print(llvm::errs());
 
             ////////////////////////////////////////////////////////////////////
-            // STEP 2: optimize lifted LLVM-IR, optionally using the new pass
+            // STEP 2: perform instrumentation
+
+            std::chrono::steady_clock::time_point time_instrument_start;
+            if (server_config.debug_profile_server)
+                time_instrument_start = std::chrono::steady_clock::now();
+
+            fn = tool.Instrument(fn);
+
+            if (server_config.debug_profile_server)
+                dur_instrument += std::chrono::steady_clock::now() - time_instrument_start;
+
+            // Print IR before target-specific transformations
+            if (server_config.debug_dump_ir)
+                fn->print(llvm::errs());
+
+            ////////////////////////////////////////////////////////////////////
+            // STEP 3: optimize lifted LLVM-IR, optionally using the new pass
             //   manager of LLVM
 
             std::chrono::steady_clock::time_point time_llvm_opt_start;
@@ -268,7 +345,8 @@ int main(int argc, char** argv) {
                 if (helper_fn->user_empty())
                     helper_fn->removeFromParent();
 
-            optimizer.Optimize(fn);
+            if (tool.Optimize())
+                optimizer.Optimize(fn);
 
             if (server_config.debug_profile_server)
                 dur_llvm_opt += std::chrono::steady_clock::now() - time_llvm_opt_start;
@@ -278,7 +356,7 @@ int main(int argc, char** argv) {
                 fn->print(llvm::errs());
 
             ////////////////////////////////////////////////////////////////////
-            // STEP 3: generate machine code
+            // STEP 4: generate machine code
 
             std::chrono::steady_clock::time_point time_llvm_codegen_start;
             if (server_config.debug_profile_server)
@@ -294,7 +372,7 @@ int main(int argc, char** argv) {
                 fn->print(llvm::errs());
 
             ////////////////////////////////////////////////////////////////////
-            // STEP 4: send object file to the client, and clean-up.
+            // STEP 5: send object file to the client, and clean-up.
 
             conn.SendMsg(Msg::S_OBJECT, obj_buffer.data(), obj_buffer.size());
 

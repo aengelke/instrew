@@ -7,5 +7,6 @@ sources = files(
 )
 executable('instrew-server', sources,
            include_directories: include_directories('../shared'),
-           dependencies: [librellume, libllvm],
+           dependencies: [librellume, libllvm, instrew_api],
+           link_args: ['-ldl'],
            install: true)
