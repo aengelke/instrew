@@ -58,7 +58,11 @@ struct InstrewDesc {
     /// function may run optimization passes. It may return the old function or
     /// create a new one with changed semantics. In the second case the API must
     /// be identical and the old function must be deleted. This function must
-    /// not add new LLVM functions to the module.
+    /// not add new LLVM functions to the module (except the one returned, as
+    /// stated above).
+    ///
+    /// To store data, tools may use the CPU struct pointer. The area from
+    /// `[ptr-0x40, ..., ptr-0x8)` is available and can be used freely.
     LLVMValueRef( *instrument)(void* handle, LLVMValueRef function);
 };
 

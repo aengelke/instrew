@@ -7,6 +7,10 @@
 #include <translator.h>
 
 struct State {
+    /// Points to the CPU state. There are additional 64 bytes available
+    /// immediately *before* this address. The *last* 8 bytes are used
+    /// internally to store a reference to this State structure. The other 56
+    /// bytes can be used freely by instrumentation tools.
     void* cpu;
 
     Rtld rtld;
