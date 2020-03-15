@@ -63,6 +63,8 @@ Msg::Id Conn::RecvMsg() {
 }
 
 void Conn::Read(void* buf, size_t size) {
+    if (size == 0)
+        return;
     if (remaining_sz >= 0 && (size_t) remaining_sz < size) {
         std::cerr << "tried to read " << size << "; but have " << remaining_sz << std::endl;
         abort();
