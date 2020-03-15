@@ -247,16 +247,18 @@ int main(int argc, char** argv) {
     llvm::LLVMContext ctx;
     llvm::Module mod("mod", ctx);
 
-    InstrumenterTool tool;
-    if (tool.Init(server_config, &mod) != 0)
-        return 1;
-
-    // Add syscall implementation to module
+    // Add declarations (and definitions) of helper functions to module. We do
+    // this before initializing the tool to give tools a chance to cache
+    // references or modify such functions globally.
     auto syscall_fn = CreateFunc(&mod, "syscall");
     auto noop_fn = CreateNoopFn(&mod);
     auto cpuid_fn = CreateFunc(&mod, "cpuid");
     auto rdtsc_fn = CreateRdtscFn(&mod);
     auto marker_fn = CreateMarkerFn(&mod);
+
+    InstrumenterTool tool;
+    if (tool.Init(server_config, &mod) != 0)
+        return 1;
 
     // Create rellume config
     LLConfig* rlcfg = ll_config_new();
