@@ -27,7 +27,7 @@ emulate_cpuid(uint64_t* cpu_state) {
 
 void
 emulate_syscall(uint64_t* cpu_state) {
-    struct State* state = (struct State*) cpu_state[-1];
+    struct State* state = STATE_FROM_CPU_STATE(cpu_state);
 
     uint64_t arg0 = cpu_state[8], arg1 = cpu_state[7], arg2 = cpu_state[3],
              arg3 = cpu_state[11], arg4 = cpu_state[9], arg5 = cpu_state[10];

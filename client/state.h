@@ -28,4 +28,6 @@ struct State {
     } config;
 };
 
+#define STATE_FROM_CPU_STATE(cpu_state) (*((struct State**) (cpu_state) - 1))
+
 #endif

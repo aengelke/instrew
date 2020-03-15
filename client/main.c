@@ -219,16 +219,16 @@ int main(int argc, char** argv) {
 
     BinaryInfo info = {0};
 
-    uint8_t cpu_state[0x40 + 0x400] __attribute__((aligned(64))) = {0};
+    uint8_t cpu_state_buffer[0x40 + 0x400] __attribute__((aligned(64))) = {0};
 
     // Initialize state.
     struct State state = {0};
-    state.cpu = cpu_state + 0x40;
+    state.cpu = cpu_state_buffer + 0x40;
     state.config.perfmap_fd = -1;
     state.config.opt_level = 1;
     state.config.opt_unsafe_callret = true;
 
-    *((uint64_t*) state.cpu - 1) = (uint64_t) &state;
+    STATE_FROM_CPU_STATE(state.cpu) = &state;
 
     const char* server_path = INSTREW_DEFAULT_SERVER;
     const char* tool_path = "none";
