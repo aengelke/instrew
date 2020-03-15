@@ -176,11 +176,11 @@ resolve:
 
             "mov %%r11, 0x60(%%r12);" // Store guest r11
             "pop %%r11;"
-        : "+r"(reg_rbx),
+        : "+r"(reg_rbx), "+r"(reg_r14),
           "+r"(guest_rax), "+r"(guest_rcx), "+r"(guest_rdx), "+r"(guest_rbx),
           "+r"(guest_rsp), "+r"(guest_rbp), "+r"(guest_rsi), "+r"(guest_rdi),
           "+r"(guest_r8), "+r"(guest_r9), "+r"(guest_r10)
-        : "r"(reg_r11), "r"(reg_r12), "r"(reg_r14),
+        : "r"(reg_r11), "r"(reg_r12),
           [quick_tlb_mask] "i"(((1 << QUICK_TLB_BITS) - 1) << 4)
         : "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
           "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
