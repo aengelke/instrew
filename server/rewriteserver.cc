@@ -244,7 +244,12 @@ int main(int argc, char** argv) {
     auto cpuid_fn = CreateFunc(&mod, "cpuid");
     auto rdtsc_fn = CreateRdtscFn(&mod);
 
-    llvm::Function* const helper_fns[] = {noop_fn, cpuid_fn, rdtsc_fn};
+    // Store all helper functions in a vector, so that we can easily remove them
+    // before optimizations/code generation and add them back afterwards.
+    std::vector<llvm::Function*> helper_fns;
+    helper_fns.reserve(mod.size());
+    for (llvm::Function& fn : mod.functions())
+        helper_fns.push_back(&fn);
 
     // Create rellume config
     LLConfig* rlcfg = ll_config_new();
