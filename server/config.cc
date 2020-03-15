@@ -17,7 +17,7 @@ static void ReadInt32(int32_t& tgt, Conn& conn) {
 }
 static void ReadStr(std::string& tgt, Conn& conn) {
     size_t len = conn.Read<uint32_t>();
-    tgt.reserve(len);
+    tgt.resize(len, '\x7f');
     conn.Read(&tgt[0], len);
 }
 
