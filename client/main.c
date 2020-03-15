@@ -229,6 +229,8 @@ int main(int argc, char** argv) {
     *((uint64_t*) state.cpu - 1) = (uint64_t) &state;
 
     const char* server_path = NULL;
+    const char* tool_path = "none";
+    const char* tool_config = "";
 
     while (argc > 1) {
         --argc;
@@ -253,6 +255,13 @@ int main(int argc, char** argv) {
             state.config.d_dump_objects = true;
         } else if (strncmp(arg, "-server=", 8) == 0) {
             server_path = arg + 8;
+        } else if (strncmp(arg, "-tool=", 6) == 0) {
+            tool_path = arg + 6;
+            char* colon = strchr(tool_path, ':');
+            if (colon != NULL) {
+                *colon = '\0';
+                tool_config = colon + 1;
+            }
         } else {
             break;
         }
@@ -283,6 +292,8 @@ int main(int argc, char** argv) {
     bool hhvm_dispatch = false;
 
     retval = translator_config_begin(&state.translator);
+    retval = translator_config_tool(&state.translator, tool_path);
+    retval = translator_config_tool_config(&state.translator, tool_config);
     retval = translator_config_opt_pass_pipeline(&state.translator, state.config.opt_level);
     retval = translator_config_opt_code_gen(&state.translator, 3);
     retval = translator_config_opt_unsafe_callret(&state.translator, state.config.opt_unsafe_callret);
