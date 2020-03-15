@@ -228,7 +228,7 @@ int main(int argc, char** argv) {
 
     *((uint64_t*) state.cpu - 1) = (uint64_t) &state;
 
-    const char* tool_path = NULL;
+    const char* server_path = NULL;
 
     while (argc > 1) {
         --argc;
@@ -251,8 +251,8 @@ int main(int argc, char** argv) {
             state.config.verbose = true;
         } else if (strcmp(arg, "-ddump-objects") == 0) {
             state.config.d_dump_objects = true;
-        } else if (strncmp(arg, "-tool=", 6) == 0) {
-            tool_path = arg + 6;
+        } else if (strncmp(arg, "-server=", 8) == 0) {
+            server_path = arg + 8;
         } else {
             break;
         }
@@ -269,14 +269,14 @@ int main(int argc, char** argv) {
         return retval;
     }
 
-    if (tool_path == NULL) {
-        puts("error: no tool specified, use -tool=<path>");
+    if (server_path == NULL) {
+        puts("error: no server specified, use -server=<path>");
         return 1;
     }
 
-    retval = translator_init(&state.translator, tool_path);
+    retval = translator_init(&state.translator, server_path);
     if (retval != 0) {
-        puts("error: could not spawn rewriting tool");
+        puts("error: could not spawn rewriting server");
         return retval;
     }
 
