@@ -2,6 +2,7 @@
 #include "codegenerator.h"
 #include "config.h"
 #include "connection.h"
+#include "instrew-server-config.h"
 #include "optimizer.h"
 
 #include <fadec.h>
@@ -170,7 +171,14 @@ public:
             std::cerr << "error: no tool specified" << std::endl;
             return -EINVAL;
         }
-        dl_handle = dlopen(server_config.tool.c_str(), RTLD_NOW);
+
+        std::string tool_lib = server_config.tool;
+        if (tool_lib.find('/') == std::string::npos) {
+            std::stringstream ss;
+            ss << INSTREW_TOOL_PATH << "/tool-" << server_config.tool << ".so";
+            tool_lib = ss.str();
+        }
+        dl_handle = dlopen(tool_lib.c_str(), RTLD_NOW);
         if (!dl_handle) {
             std::cerr << "error: could not open tool: " << dlerror() << std::endl;
             return -ELIBBAD;

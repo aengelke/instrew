@@ -10,6 +10,8 @@
 #include <state.h>
 #include <translator.h>
 
+#include "instrew-client-config.h"
+
 #define PLATFORM_STRING "x86_64"
 #define PAGESIZE ((size_t) 0x1000)
 
@@ -228,7 +230,7 @@ int main(int argc, char** argv) {
 
     *((uint64_t*) state.cpu - 1) = (uint64_t) &state;
 
-    const char* server_path = NULL;
+    const char* server_path = INSTREW_DEFAULT_SERVER;
     const char* tool_path = "none";
     const char* tool_config = "";
 
@@ -282,6 +284,9 @@ int main(int argc, char** argv) {
         puts("error: no server specified, use -server=<path>");
         return 1;
     }
+
+    if (state.config.verbose)
+        printf("note: using server %s\n", server_path);
 
     retval = translator_init(&state.translator, server_path);
     if (retval != 0) {
