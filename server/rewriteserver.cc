@@ -271,7 +271,7 @@ int main(int argc, char** argv) {
         ll_config_set_instr_marker(rlcfg, llvm::wrap(marker_fn));
     else // Remove useless marker function if tool doesn't require it.
         marker_fn->eraseFromParent();
-    ll_config_set_instr_impl(rlcfg, FDI_SYSCALL, llvm::wrap(syscall_fn));
+    ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
     ll_config_set_instr_impl(rlcfg, FDI_CPUID, llvm::wrap(cpuid_fn));
     ll_config_set_instr_impl(rlcfg, FDI_RDTSC, llvm::wrap(rdtsc_fn));
     ll_config_set_instr_impl(rlcfg, FDI_FLDCW, llvm::wrap(noop_fn));
