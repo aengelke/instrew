@@ -47,5 +47,4 @@ subdir('client')
 subdir('tool-api')
 subdir('server')
 
-subdir('tool-none')
 subdir('tools-simple')
