@@ -13,15 +13,26 @@ void
 emulate_cpuid(uint64_t* cpu_state) {
     uint64_t rax = cpu_state[1], rcx = cpu_state[2];
     if (rax == 0) {
-        cpu_state[1] = 1; // eax = max input value for basic CPUID
+        cpu_state[1] = 3; // eax = max input value for basic CPUID
         cpu_state[2] = 0x6c65746e; // ecx = "ntel"
         cpu_state[3] = 0x49656e69; // edx = "ineI"
         cpu_state[4] = 0x756e6547; // ebx = "Genu"
-    } else { // page 1
+    } else if (rax == 1) { // page 1 (feature information)
         cpu_state[1] = 0; // eax = <not implemented>
         cpu_state[2] = 0x00400000; // ecx = movbe
         cpu_state[3] = 0x07008040; // edx = pae+cmov+fxsr+sse+sse2
         cpu_state[4] = 0; // ebx = <not implemented>
+    } else if (rax == 2) { // page 2 (TLB/cache/prefetch information)
+        // TODO: retrieve actual cache information
+        cpu_state[1] = 0x80000001; // eax = reserved (with al=01)
+        cpu_state[2] = 0x80000000; // ecx = reserved
+        cpu_state[3] = 0x80000000; // edx = reserved
+        cpu_state[4] = 0x80000000; // ebx = reserved
+    } else { // page 3 (processor serial number; not supported)
+        cpu_state[1] = 0x00000000; // eax = reserved
+        cpu_state[2] = 0x00000000; // ecx = reserved
+        cpu_state[3] = 0x00000000; // edx = reserved
+        cpu_state[4] = 0x00000000; // ebx = reserved
     }
 }
 
