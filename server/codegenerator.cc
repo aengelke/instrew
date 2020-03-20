@@ -47,7 +47,8 @@ public:
         target = the_target->createTargetMachine(
             /*TT=*/triple, /*CPU=*/server_config.cpu,
             /*Features=*/server_config.cpu_features, /*Options=*/target_options,
-            /*RelocModel=*/llvm::None, /*CodeModel=*/llvm::None,
+            /*RelocModel=*/llvm::Reloc::DynamicNoPIC,
+            /*CodeModel=*/llvm::CodeModel::Small,
             /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(server_config.opt_code_gen),
             /*JIT=*/true
         );

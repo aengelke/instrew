@@ -17,6 +17,8 @@ struct Rtld {
     RtldObject* objects;
     size_t objects_idx;
     size_t objects_cap;
+
+    void* plt;
 };
 typedef struct Rtld Rtld;
 

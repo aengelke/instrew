@@ -33,6 +33,62 @@
 #define RTLD_HASH_MASK ((1 << RTLD_HASH_BITS) - 1)
 #define RTLD_HASH(addr) (((addr >> 2)) & RTLD_HASH_MASK)
 
+struct PltEntry {
+    const char* name;
+    uintptr_t func;
+};
+
+static const struct PltEntry plt_entries[] = {
+    { "syscall", (uintptr_t) emulate_syscall },
+    { "cpuid", (uintptr_t) emulate_cpuid },
+    { "__divti3", (uintptr_t) emulate___divti3 },
+    { "__udivti3", (uintptr_t) emulate___udivti3 },
+    { "__modti3", (uintptr_t) emulate___modti3 },
+    { "__umodti3", (uintptr_t) emulate___umodti3 },
+    { "memset", (uintptr_t) memset },
+    { NULL, 0 }
+};
+
+#if defined(__x86_64__)
+#define PLT_FUNC_SIZE 8
+#else
+#error "currently unsupported architecture"
+#endif
+
+static int
+plt_create(void** out_plt) {
+    size_t plt_entry_count = sizeof(plt_entries) / sizeof(plt_entries[0]) - 1;
+    size_t code_size = plt_entry_count * PLT_FUNC_SIZE;
+    size_t data_offset = ALIGN_UP(code_size, 0x40);
+    size_t data_size = plt_entry_count * sizeof(uintptr_t);
+    size_t plt_size = data_offset + data_size;
+
+    uint8_t* plt = mem_alloc(plt_size);
+    if (BAD_ADDR(plt))
+        return (int) (uintptr_t) plt;
+
+    for (size_t i = 0; i < plt_entry_count; i++) {
+        uint8_t* code_ptr = plt + i * PLT_FUNC_SIZE;
+        uint8_t* data_ptr = plt + data_offset + i * sizeof(uintptr_t);
+
+        *((uintptr_t*) data_ptr) = plt_entries[i].func;
+#if defined(__x86_64__)
+        uint64_t offset = data_ptr - code_ptr - 6;
+        // This is: "jmp [rip + offset]; ud2"
+        *((uint64_t*) code_ptr) = 0x0b0f0000000025ff | (offset << 16);
+#else
+#error
+#endif // defined(__x86_64__)
+    }
+
+    int retval = mprotect(plt, plt_size, PROT_READ|PROT_EXEC);
+    if (retval < 0)
+        return retval;
+
+    *out_plt = plt;
+    return 0;
+}
+
 static RtldObject*
 rtld_hash_lookup(Rtld* r, uintptr_t addr) {
     size_t hash = RTLD_HASH(addr);
@@ -54,17 +110,21 @@ struct RtldElf {
     size_t size;
     Elf64_Ehdr* re_ehdr;
     Elf64_Shdr* re_shdr;
+
+    // Global PLT
+    void* plt;
 };
 typedef struct RtldElf RtldElf;
 
 static int
-rtld_elf_init(RtldElf* re, void* obj_base, size_t obj_size) {
+rtld_elf_init(RtldElf* re, void* obj_base, size_t obj_size, void* plt) {
     if (obj_size < sizeof(Elf64_Ehdr))
         goto err;
 
     re->base = obj_base;
     re->size = obj_size;
     re->re_ehdr = obj_base;
+    re->plt = plt;
 
     if (memcmp(re->re_ehdr, ELFMAG, SELFMAG) != 0)
         goto err;
@@ -117,21 +177,18 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* 
     if (sym->st_shndx == SHN_UNDEF) {
         const char* name = "<unknown>";
         rtld_elf_resolve_str(re, sym_shdr->sh_link, sym->st_name, &name);
-        if (!strcmp(name, "syscall")) {
-            *out_addr = (uintptr_t) emulate_syscall;
-        } else if (!strcmp(name, "cpuid")) {
-            *out_addr = (uintptr_t) emulate_cpuid;
-        } else if (!strcmp(name, "__divti3")) {
-            *out_addr = (uintptr_t) emulate___divti3;
-        } else if (!strcmp(name, "__udivti3")) {
-            *out_addr = (uintptr_t) emulate___udivti3;
-        } else if (!strcmp(name, "__modti3")) {
-            *out_addr = (uintptr_t) emulate___modti3;
-        } else if (!strcmp(name, "__umodti3")) {
-            *out_addr = (uintptr_t) emulate___umodti3;
-        } else if (!strcmp(name, "memset")) {
-            *out_addr = (uintptr_t) memset;
+        if (!strncmp(name, "glob_", 5)) {
+            dprintf(2, "undefined symbol reference to %s\n", name);
+            return -EINVAL;
         } else {
+            // Search through PLT
+            for (size_t i = 0; plt_entries[i].name; i++) {
+                if (!strcmp(name, plt_entries[i].name)) {
+                    *out_addr = (uintptr_t) re->plt + i * PLT_FUNC_SIZE;
+                    return 0;
+                }
+            }
+
             dprintf(2, "undefined symbol reference to %s\n", name);
             return -EINVAL;
         }
@@ -205,6 +262,42 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
             if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
                 return -EINVAL;
             *((uint64_t*) tgt) = sym + elf_rela->r_addend;
+            break;
+        }
+        case R_X86_64_PC32: {
+            uint64_t sym;
+            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+                return -EINVAL;
+            int64_t off = sym + elf_rela->r_addend - (uint64_t) tgt;
+            if (!CHECK_SIGNED_BITS(off, 32)) {
+                dprintf(2, "relocation offset too large (pc32): %lx\n", off);
+                return -EINVAL;
+            }
+            *((int32_t*) tgt) = off;
+            break;
+        }
+        case R_X86_64_PLT32: {
+            uint64_t sym;
+            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+                return -EINVAL;
+            int64_t off = sym + elf_rela->r_addend - (uint64_t) tgt;
+            if (!CHECK_SIGNED_BITS(off, 32)) {
+                dprintf(2, "relocation offset too large (plt32): %lx\n", off);
+                return -EINVAL;
+            }
+            *((int32_t*) tgt) = off;
+            break;
+        }
+        case R_X86_64_32S: {
+            uint64_t sym;
+            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+                return -EINVAL;
+            int64_t val = sym + elf_rela->r_addend;
+            if (!CHECK_SIGNED_BITS(val, 32)) {
+                dprintf(2, "relocation offset too large (32s): %lx\n", val);
+                return -EINVAL;
+            }
+            *((int32_t*) tgt) = val;
             break;
         }
         case R_X86_64_PC64: {
@@ -305,7 +398,7 @@ int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size,
     int retval;
 
     RtldElf re;
-    if ((retval = rtld_elf_init(&re, obj_base, obj_size)) < 0)
+    if ((retval = rtld_elf_init(&re, obj_base, obj_size, r->plt)) < 0)
         goto out;
 
     retval = -EINVAL;
@@ -389,6 +482,10 @@ rtld_init(Rtld* r) {
         return (int) (uintptr_t) objects;
 
     r->objects = objects;
+
+    int retval = plt_create(&r->plt);
+    if (retval < 0)
+        return retval;
 
     return 0;
 }
