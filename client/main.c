@@ -168,8 +168,7 @@ resolve:
             "mov 0x60(%%r12), %%r11;" // Load guest r11
             ".align 16;"
         "1:"
-            "mov 8(%%r14), %%r14;" // Load new addr from quick_tlb, keep rbx
-            "call *%%r14;" // Old RIP and new RIP stored in rbx
+            "call *8(%%r14);" // New RIP stored in rbx
             "lea (,%%rbx,4), %%r14;"
             "and %[quick_tlb_mask], %%r14;"
             "add (%%rsp), %%r14;" // r14 is now the pointer to the TLB entry
