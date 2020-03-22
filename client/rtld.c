@@ -7,7 +7,6 @@
 
 #include <rtld.h>
 
-#include <emulate.h>
 #include <memory.h>
 
 
@@ -38,14 +37,16 @@ struct PltEntry {
     uintptr_t func;
 };
 
+// Declare functions, but avoid name collision in C.
+#define PLT_ENTRY(name, func) \
+        extern char PASTE(rtld_plt_, func) __asm__(STRINGIFY(func));
+#include "plt.inc"
+#undef PLT_ENTRY
+
 static const struct PltEntry plt_entries[] = {
-    { "syscall", (uintptr_t) emulate_syscall },
-    { "cpuid", (uintptr_t) emulate_cpuid },
-    { "__divti3", (uintptr_t) emulate___divti3 },
-    { "__udivti3", (uintptr_t) emulate___udivti3 },
-    { "__modti3", (uintptr_t) emulate___modti3 },
-    { "__umodti3", (uintptr_t) emulate___umodti3 },
-    { "memset", (uintptr_t) memset },
+#define PLT_ENTRY(name, func) { name, (uintptr_t) &(PASTE(rtld_plt_, func)) },
+#include "plt.inc"
+#undef PLT_ENTRY
     { NULL, 0 }
 };
 

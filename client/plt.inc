@@ -1,0 +1,7 @@
+PLT_ENTRY("syscall", emulate_syscall) // emulate.c
+PLT_ENTRY("cpuid", emulate_cpuid) // emulate.c
+PLT_ENTRY("__divti3", emulate___divti3) // emulate.c
+PLT_ENTRY("__udivti3", emulate___udivti3) // emulate.c
+PLT_ENTRY("__modti3", emulate___modti3) // emulate.c
+PLT_ENTRY("__umodti3", emulate___umodti3) // emulate.c
+PLT_ENTRY("memset", memset) // minilibc.c
