@@ -34,5 +34,6 @@ struct State {
 };
 
 #define STATE_FROM_CPU_STATE(cpu_state) (*((struct State**) (cpu_state) - 1))
+#define QTLB_FROM_CPU_STATE(cpu_state) (*((uint64_t (**)[2]) (cpu_state) - 2))
 
 #endif

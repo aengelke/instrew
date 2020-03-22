@@ -72,8 +72,8 @@ print_trace(struct State* state, uintptr_t addr) {
 
 __attribute__((noreturn))
 static void cdecl_dispatch(struct State* state) {
-    uint64_t quick_tlb[1 << QUICK_TLB_BITS][2] = {0};
     uint64_t* cpu_state = (uint64_t*) state->cpu;
+    uint64_t(* quick_tlb)[2] = QTLB_FROM_CPU_STATE(cpu_state);
 
     while (true) {
         uintptr_t addr = cpu_state[0];
@@ -103,13 +103,13 @@ static void cdecl_dispatch(struct State* state) {
 __attribute__((noinline))
 __attribute__((noreturn))
 static void hhvm_dispatch(struct State* state) {
-    uint64_t quick_tlb[1 << QUICK_TLB_BITS][2] = {0};
-
     uintptr_t addr;
     uintptr_t func;
     uintptr_t hash;
 
     uint64_t* cpu_state = (uint64_t*) state->cpu;
+    uint64_t(* quick_tlb)[2] = QTLB_FROM_CPU_STATE(cpu_state);
+
     addr = cpu_state[0];
 
 resolve:
@@ -187,6 +187,9 @@ resolve:
 
 __attribute__((noreturn))
 void dispatch_loop(struct State* state) {
+    uint64_t quick_tlb[1 << QUICK_TLB_BITS][2] = {0};
+    QTLB_FROM_CPU_STATE(state->cpu) = quick_tlb;
+
     if (state->config.hhvm) {
 #if defined(__x86_64__)
         hhvm_dispatch(state);
