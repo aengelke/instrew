@@ -1,4 +1,5 @@
 sources = files(
+    'dispatch.c',
     'elf-loader.c',
     'emulate.c',
     'main.c',
