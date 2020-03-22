@@ -70,32 +70,29 @@ print_trace(struct State* state, uintptr_t addr) {
     }
 }
 
-__attribute__((noreturn))
-static void cdecl_dispatch(struct State* state) {
-    uint64_t* cpu_state = (uint64_t*) state->cpu;
+static void dispatch_cdecl(uint64_t* cpu_state) {
+    struct State* state = STATE_FROM_CPU_STATE(cpu_state);
     uint64_t(* quick_tlb)[2] = QTLB_FROM_CPU_STATE(cpu_state);
 
-    while (true) {
-        uintptr_t addr = cpu_state[0];
-        uintptr_t hash = QUICK_TLB_HASH(addr);
+    uintptr_t addr = cpu_state[0];
+    uintptr_t hash = QUICK_TLB_HASH(addr);
 
-        print_trace(state, addr);
+    print_trace(state, addr);
 
-        uintptr_t func;
-        if (LIKELY(quick_tlb[hash][0] == addr)) {
-            func = quick_tlb[hash][1];
-        } else {
-            func = resolve_func(state, addr);
+    uintptr_t func;
+    if (LIKELY(quick_tlb[hash][0] == addr)) {
+        func = quick_tlb[hash][1];
+    } else {
+        func = resolve_func(state, addr);
 
-            // Store in TLB
-            quick_tlb[hash][0] = addr;
-            quick_tlb[hash][1] = func;
-        }
-
-        void(* func_p)(void*);
-        *((void**) &func_p) = (void*) func;
-        func_p(cpu_state);
+        // Store in TLB
+        quick_tlb[hash][0] = addr;
+        quick_tlb[hash][1] = func;
     }
+
+    void(* func_p)(void*);
+    *((void**) &func_p) = (void*) func;
+    func_p(cpu_state);
 }
 
 #ifdef __x86_64__
@@ -198,6 +195,8 @@ void dispatch_loop(struct State* state) {
         _exit(-EOPNOTSUPP);
 #endif // defined(__x86_64__)
     } else {
-        cdecl_dispatch(state);
+        while (true) {
+            dispatch_cdecl(state->cpu);
+        }
     }
 }
