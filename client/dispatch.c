@@ -8,7 +8,11 @@
 #include <translator.h>
 
 
-static uintptr_t
+// Prototype to make compilers happy. This is used in the assembly HHVM
+// dispatcher on x86-64 below.
+uintptr_t resolve_func(struct State*, uintptr_t);
+
+__attribute__((externally_visible)) uintptr_t
 resolve_func(struct State* state, uintptr_t addr) {
     void* func;
     int retval = rtld_resolve(&state->rtld, addr, &func);
@@ -97,88 +101,90 @@ static void dispatch_cdecl(uint64_t* cpu_state) {
 
 #ifdef __x86_64__
 
-__attribute__((noinline))
-__attribute__((noreturn))
-static void hhvm_dispatch(struct State* state) {
-    uintptr_t addr;
-    uintptr_t func;
-    uintptr_t hash;
+__attribute__((noreturn)) extern void dispatch_hhvm(uint64_t* cpu_state);
 
-    uint64_t* cpu_state = (uint64_t*) state->cpu;
-    uint64_t(* quick_tlb)[2] = QTLB_FROM_CPU_STATE(cpu_state);
+#define QUICK_TLB_OFFSET_ASM(dest_reg, addr_reg) \
+        lea dest_reg, [addr_reg * 4]; \
+        and dest_reg, ((1 << QUICK_TLB_BITS) - 1) << 4;
 
-    addr = cpu_state[0];
+ASM_BLOCK(
+    .intel_syntax noprefix;
 
-resolve:
-    if (state->config.print_trace)
-        print_trace(state, addr);
+    // Stores result in r14, preserves all other registers
+    .align 16;
+    .type dispatch_hhvm_resolve, @function;
+dispatch_hhvm_resolve: // stack alignment: hhvm
+    // Save all cdecl caller-saved registers.
+    mov [r12 + 1 * 8], rax;
+    mov [r12 + 2 * 8], rcx;
+    mov [r12 + 3 * 8], rdx;
+    mov [r12 + 7 * 8], rsi;
+    mov [r12 + 8 * 8], rdi;
+    mov [r12 + 9 * 8], r8;
+    mov [r12 + 10 * 8], r9;
+    mov [r12 + 11 * 8], r10;
+    mov [r12 + 12 * 8], r11;
+    mov rdi, [r12 - 0x08]; // state
+    mov rsi, rbx; // addr
+    call resolve_func;
 
-    hash = QUICK_TLB_HASH(addr);
-    func = resolve_func(state, addr);
+    QUICK_TLB_OFFSET_ASM(rdx, rbx); // Compute quick_tlb hash to rdx
+    add rdx, [r12 - 0x10]; // rdx = quick_tlb entry
+    mov [rdx], rbx; // addr
+    mov [rdx + 8], rax; // func
+    mov r14, rax; // return value
+    // Restore callee-saved registers.
+    mov rax, [r12 + 1 * 8];
+    mov rcx, [r12 + 2 * 8];
+    mov rdx, [r12 + 3 * 8];
+    mov rsi, [r12 + 7 * 8];
+    mov rdi, [r12 + 8 * 8];
+    mov r8, [r12 + 9 * 8];
+    mov r9, [r12 + 10 * 8];
+    mov r10, [r12 + 11 * 8];
+    mov r11, [r12 + 12 * 8];
+    ret;
+    .size dispatch_hhvm_resolve, .-dispatch_hhvm_resolve;
 
-    // Store in TLB
-    quick_tlb[hash][0] = addr;
-    quick_tlb[hash][1] = func;
+    .align 16;
+    .global dispatch_hhvm;
+    .type dispatch_hhvm, @function;
+dispatch_hhvm:
+    mov r12, rdi; // cpu_state
+    // Load HHVM registers
+    mov rbx, [r12 + 0 * 8];
+    mov rax, [r12 + 1 * 8];
+    mov rcx, [r12 + 2 * 8];
+    mov rdx, [r12 + 3 * 8];
+    mov rbp, [r12 + 4 * 8];
+    mov r15, [r12 + 5 * 8];
+    mov r13, [r12 + 6 * 8];
+    mov rsi, [r12 + 7 * 8];
+    mov rdi, [r12 + 8 * 8];
+    mov r8, [r12 + 9 * 8];
+    mov r9, [r12 + 10 * 8];
+    mov r10, [r12 + 11 * 8];
+    mov r11, [r12 + 12 * 8];
 
-    // Don't use TLB, so we get full traces.
-    if (state->config.print_trace)
-        quick_tlb[hash][0] = 0;
+    jmp 4f;
 
-    register uintptr_t reg_r12 __asm__("r12") = (uintptr_t) cpu_state;
-    register uintptr_t reg_r11 __asm__("r11") = (uintptr_t) quick_tlb;
-    register uintptr_t reg_rbx __asm__("rbx") = addr;
-    register uintptr_t reg_r14 __asm__("r14") = (uintptr_t) &quick_tlb[hash];
-    register uint64_t guest_rax __asm__("rax") = cpu_state[1];
-    register uint64_t guest_rcx __asm__("rcx") = cpu_state[2];
-    register uint64_t guest_rdx __asm__("rdx") = cpu_state[3];
-    register uint64_t guest_rbx __asm__("rbp") = cpu_state[4];
-    register uint64_t guest_rsp __asm__("r15") = cpu_state[5];
-    register uint64_t guest_rbp __asm__("r13") = cpu_state[6];
-    register uint64_t guest_rsi __asm__("rsi") = cpu_state[7];
-    register uint64_t guest_rdi __asm__("rdi") = cpu_state[8];
-    register uint64_t guest_r8 __asm__("r8") = cpu_state[9];
-    register uint64_t guest_r9 __asm__("r9") = cpu_state[10];
-    register uint64_t guest_r10 __asm__("r10") = cpu_state[11];
-    __asm__ volatile(
-            "push %%r11;"
-            "mov 0x60(%%r12), %%r11;" // Load guest r11
-            ".align 16;"
-        "1:"
-            "call *8(%%r14);" // New RIP stored in rbx
-            "lea (,%%rbx,4), %%r14;"
-            "and %[quick_tlb_mask], %%r14;"
-            "add (%%rsp), %%r14;" // r14 is now the pointer to the TLB entry
-            "cmp %%rbx, (%%r14);"
-            "je 1b;"
+    .align 16;
+    // This is the quick_tlb hot loop.
+2:  call [r14 + 8];
+3:  QUICK_TLB_OFFSET_ASM(r14, rbx); // Compute quick_tlb hash to r14
+    add r14, [r12 - 0x10]; // r14 = quick_tlb entry
+    cmp rbx, [r14];
+    je 2b;
 
-            "mov %%r11, 0x60(%%r12);" // Store guest r11
-            "pop %%r11;"
-        : "+r"(reg_rbx), "+r"(reg_r14),
-          "+r"(guest_rax), "+r"(guest_rcx), "+r"(guest_rdx), "+r"(guest_rbx),
-          "+r"(guest_rsp), "+r"(guest_rbp), "+r"(guest_rsi), "+r"(guest_rdi),
-          "+r"(guest_r8), "+r"(guest_r9), "+r"(guest_r10)
-        : "r"(reg_r11), "r"(reg_r12),
-          [quick_tlb_mask] "i"(((1 << QUICK_TLB_BITS) - 1) << 4)
-        : "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
-          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
-          "cc", "memory"
-    );
+    // This code isn't exactly cold, but should be executed not that often.
+    // If we don't have addr in the quick_tlb, do a full resolve.
+4:  call dispatch_hhvm_resolve;
+    call r14; // can't deduplicate call because we don't get the qtlb pointer.
+    jmp 3b;
+    .size dispatch_hhvm, .-dispatch_hhvm;
 
-    addr = reg_rbx;
-    cpu_state[1] = guest_rax;
-    cpu_state[2] = guest_rcx;
-    cpu_state[3] = guest_rdx;
-    cpu_state[4] = guest_rbx;
-    cpu_state[5] = guest_rsp;
-    cpu_state[6] = guest_rbp;
-    cpu_state[7] = guest_rsi;
-    cpu_state[8] = guest_rdi;
-    cpu_state[9] = guest_r8;
-    cpu_state[10] = guest_r9;
-    cpu_state[11] = guest_r10;
-
-    goto resolve;
-}
+    .att_syntax;
+);
 
 #endif // defined(__x86_64__)
 
@@ -189,7 +195,7 @@ void dispatch_loop(struct State* state) {
 
     if (state->config.hhvm) {
 #if defined(__x86_64__)
-        hhvm_dispatch(state);
+        dispatch_hhvm(state->cpu);
 #else // !defined(__x86_64__)
         puts("error: hhvm_dispatch only supported on x86-64");
         _exit(-EOPNOTSUPP);

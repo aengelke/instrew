@@ -67,6 +67,8 @@ int __clone(int (*func)(void *), void *stack, int flags, void *arg, ...);
 
 #define STRINGIFY_ARG(x) #x
 #define STRINGIFY(x) STRINGIFY_ARG(x)
+#define STRINGIFY_VA_ARG(...) #__VA_ARGS__
+#define STRINGIFY_VA(...) STRINGIFY_VA_ARG(__VA_ARGS__)
 
 #define PASTE_ARGS(a,b) a ## b
 #define PASTE(a,b) PASTE_ARGS(a, b)
@@ -77,7 +79,7 @@ int __clone(int (*func)(void *), void *stack, int flags, void *arg, ...);
 #define LIKELY(x) __builtin_expect((x), 1)
 #define UNLIKELY(x) __builtin_expect((x), 0)
 
-#define ASM_BLOCK(...) __asm__(#__VA_ARGS__)
+#define ASM_BLOCK(...) __asm__(STRINGIFY_VA(__VA_ARGS__))
 
 #if __SIZEOF_POINTER__ == 8
 #define BAD_ADDR(a) (((uintptr_t) (a)) > 0xfffffffffffff000ULL)
