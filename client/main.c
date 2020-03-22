@@ -40,11 +40,11 @@ resolve_func(struct State* state, uintptr_t addr) {
         size_t obj_size;
         retval = translator_get(&state->translator, addr, &obj_base, &obj_size);
         if (retval < 0)
-            return retval;
+            goto error;
 
         retval = rtld_add_object(&state->rtld, addr, obj_base, obj_size, &func);
         if (retval < 0)
-            return retval;
+            goto error;
 
         if (UNLIKELY(state->config.profile_rewriting)) {
             clock_gettime(CLOCK_MONOTONIC, &end_time);
@@ -60,6 +60,10 @@ resolve_func(struct State* state, uintptr_t addr) {
     }
 
     return (uintptr_t) func;
+
+error:
+    dprintf(2, "error resolving address %lx: %u\n", addr, -retval);
+    _exit(retval);
 }
 
 #define QUICK_TLB_BITS 10
@@ -100,8 +104,6 @@ cdecl_dispatch(struct State* state) {
             func = quick_tlb[hash][1];
         } else {
             func = resolve_func(state, addr);
-            if (UNLIKELY(BAD_ADDR(func)))
-                return (int) func;
 
             // Store in TLB
             quick_tlb[hash][0] = addr;
@@ -135,10 +137,6 @@ resolve:
 
     hash = QUICK_TLB_HASH(addr);
     func = resolve_func(state, addr);
-    if (UNLIKELY(BAD_ADDR(func))) {
-        retval = func;
-        goto out;
-    }
 
     // Store in TLB
     quick_tlb[hash][0] = addr;
@@ -203,8 +201,6 @@ resolve:
 
     goto resolve;
 
-out:
-    return retval;
 #else
     puts("note: hhvm_dispatch only supported on x86-64");
     (void) state;
