@@ -29,6 +29,7 @@ struct State {
         bool opt_unsafe_callret;
         bool verbose;
         bool d_dump_objects;
+        bool hhvm;
     } config;
 };
 

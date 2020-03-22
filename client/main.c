@@ -222,6 +222,9 @@ int main(int argc, char** argv) {
     state.config.perfmap_fd = -1;
     state.config.opt_level = 1;
     state.config.opt_unsafe_callret = true;
+#ifdef __x86_64__
+    state.config.hhvm = true;
+#endif
 
     STATE_FROM_CPU_STATE(state.cpu) = &state;
 
@@ -250,6 +253,8 @@ int main(int argc, char** argv) {
             state.config.verbose = true;
         } else if (strcmp(arg, "-ddump-objects") == 0) {
             state.config.d_dump_objects = true;
+        } else if (strcmp(arg, "-nohhvm") == 0) {
+            state.config.hhvm = false;
         } else if (strncmp(arg, "-server=", 8) == 0) {
             server_path = arg + 8;
         } else if (strncmp(arg, "-tool=", 6) == 0) {
@@ -307,8 +312,10 @@ int main(int argc, char** argv) {
     retval |= translator_config_cpu_features(&state.translator, "+nopl");
     retval |= translator_config_native_segments(&state.translator, true);
     state.config.native_segment_regs = true; // TODO: fetch from S_INIT
-    retval |= translator_config_hhvm(&state.translator, true);
-    hhvm_dispatch = true; // TODO: fetch from S_INIT
+    if (state.config.hhvm) {
+        retval |= translator_config_hhvm(&state.translator, true);
+        hhvm_dispatch = true; // TODO: fetch from S_INIT
+    }
 #endif
     retval = translator_config_end(&state.translator);
     if (retval != 0) {
