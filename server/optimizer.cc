@@ -118,7 +118,7 @@ void Optimizer::Optimize(llvm::Function* fn) {
     fpm.addPass(llvm::EarlyCSEPass(server_config.opt_pass_pipeline >= 2));
     // fpm.addPass(llvm::NewGVNPass());
     // fpm.addPass(llvm::DSEPass());
-    fpm.addPass(llvm::InstCombinePass(true));
+    fpm.addPass(llvm::InstCombinePass(false));
     fpm.addPass(llvm::CorrelatedValuePropagationPass());
     // if (server_config.opt_pass_pipeline >= 2)
     fpm.addPass(llvm::SimplifyCFGPass());
@@ -126,7 +126,8 @@ void Optimizer::Optimize(llvm::Function* fn) {
     // fpm.addPass(llvm::ReassociatePass());
     // fpm.addPass(llvm::MergedLoadStoreMotionPass());
     fpm.addPass(llvm::MemCpyOptPass());
-    fpm.addPass(llvm::InstCombinePass(false));
+    if (server_config.opt_pass_pipeline >= 2)
+        fpm.addPass(llvm::InstCombinePass(false));
     // fpm.addPass(llvm::SCCPPass());
     // fpm.addPass(llvm::AAEvaluator());
     fpm.run(*fn, fam);
