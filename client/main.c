@@ -39,6 +39,7 @@ int main(int argc, char** argv) {
     state.cpu = cpu_state_buffer + 0x40;
     state.config.perfmap_fd = -1;
     state.config.opt_level = 1;
+    state.config.opt_full_facets = true;
     state.config.opt_unsafe_callret = true;
     state.config.opt_callret_lifting = true;
 #ifdef __x86_64__
@@ -64,6 +65,8 @@ int main(int argc, char** argv) {
             state.config.profile_rewriting = true;
         } else if (strcmp(arg, "-opt") == 0) {
             state.config.opt_level = 2;
+        } else if (strcmp(arg, "-nofacets") == 0) {
+            state.config.opt_full_facets = false;
         } else if (strcmp(arg, "-safe") == 0) {
             state.config.opt_unsafe_callret = false;
         } else if (strcmp(arg, "-time-passes") == 0) {
@@ -122,6 +125,7 @@ int main(int argc, char** argv) {
     retval = translator_config_tool_config(&state.translator, tool_config);
     retval = translator_config_opt_pass_pipeline(&state.translator, state.config.opt_level);
     retval = translator_config_opt_code_gen(&state.translator, 3);
+    retval = translator_config_opt_full_facets(&state.translator, state.config.opt_full_facets);
     retval = translator_config_opt_unsafe_callret(&state.translator, state.config.opt_unsafe_callret);
     retval = translator_config_opt_callret_lifting(&state.translator, state.config.opt_callret_lifting);
     retval = translator_config_debug_profile_server(&state.translator, state.config.profile_rewriting);
