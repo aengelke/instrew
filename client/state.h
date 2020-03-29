@@ -27,6 +27,7 @@ struct State {
         bool profile_llvm_passes;
         bool native_segment_regs;
         bool opt_unsafe_callret;
+        bool opt_callret_lifting;
         bool verbose;
         bool d_dump_objects;
         bool hhvm;

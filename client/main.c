@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
     state.config.perfmap_fd = -1;
     state.config.opt_level = 1;
     state.config.opt_unsafe_callret = true;
+    state.config.opt_callret_lifting = true;
 #ifdef __x86_64__
     state.config.hhvm = true;
 #endif
@@ -73,6 +74,8 @@ int main(int argc, char** argv) {
             state.config.d_dump_objects = true;
         } else if (strcmp(arg, "-nohhvm") == 0) {
             state.config.hhvm = false;
+        } else if (strcmp(arg, "-nocallret") == 0) {
+            state.config.opt_callret_lifting = false;
         } else if (strncmp(arg, "-server=", 8) == 0) {
             server_path = arg + 8;
         } else if (strncmp(arg, "-tool=", 6) == 0) {
@@ -120,6 +123,7 @@ int main(int argc, char** argv) {
     retval = translator_config_opt_pass_pipeline(&state.translator, state.config.opt_level);
     retval = translator_config_opt_code_gen(&state.translator, 3);
     retval = translator_config_opt_unsafe_callret(&state.translator, state.config.opt_unsafe_callret);
+    retval = translator_config_opt_callret_lifting(&state.translator, state.config.opt_callret_lifting);
     retval = translator_config_debug_profile_server(&state.translator, state.config.profile_rewriting);
     retval = translator_config_debug_dump_ir(&state.translator, state.config.verbose);
     retval = translator_config_debug_dump_objects(&state.translator, state.config.d_dump_objects);

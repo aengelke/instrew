@@ -35,6 +35,10 @@ enum InstrewDescFlags {
     /// and new value, respectively. All calls to this function must be removed
     /// during instrumentation.
     INSTREW_DESC_TRACK_SP = 1 << 4,
+
+    /// Indicates that lifting calls/returns to call/ret and using tail calls
+    /// for indirect jumps is supported.
+    INSTREW_DESC_SUPPORTS_CALLRET = 1 << 5,
 };
 
 struct InstrewDesc {
@@ -62,7 +66,7 @@ struct InstrewDesc {
     /// stated above).
     ///
     /// To store data, tools may use the CPU struct pointer. The area from
-    /// `[ptr-0x40, ..., ptr-0x8)` is available and can be used freely.
+    /// `[ptr-0x40, ..., ptr-0x20)` is available and can be used freely.
     LLVMValueRef( *instrument)(void* handle, LLVMValueRef function);
 };
 

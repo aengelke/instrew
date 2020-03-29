@@ -47,20 +47,42 @@ struct StructOff {
 };
 
 static llvm::Function* CreateFunc(llvm::Module* mod, const std::string name,
-                                  bool external = true) {
+                                  bool hhvm = false, bool external = true) {
     llvm::LLVMContext& ctx = mod->getContext();
-    llvm::Type* void_type = llvm::Type::getVoidTy(ctx);
-    llvm::Type* i8p_type = llvm::Type::getInt8PtrTy(ctx, SPTR_ADDR_SPACE);
-    auto fn_ty = llvm::FunctionType::get(void_type, {i8p_type}, false);
+    llvm::Type* sptr = llvm::Type::getInt8PtrTy(ctx, SPTR_ADDR_SPACE);
+
+    llvm::FunctionType* fn_ty;
+    unsigned sptr_idx;
+    if (!hhvm) {
+        llvm::Type* void_ty = llvm::Type::getVoidTy(ctx);
+        fn_ty = llvm::FunctionType::get(void_ty, {sptr}, false);
+        sptr_idx = 0;
+    } else {
+        llvm::Type* i64 = llvm::Type::getInt64Ty(ctx);
+        auto ret_ty = llvm::StructType::get(i64, i64, i64, i64, i64, i64, i64,
+                                            i64, i64, i64, i64, i64, i64, i64);
+        fn_ty = llvm::FunctionType::get(ret_ty, {i64, sptr, i64, i64, i64, i64,
+                                                 i64, i64, i64, i64, i64, i64,
+                                                 i64, i64}, false);
+        sptr_idx = 1;
+    }
+
     auto linkage = external ? llvm::GlobalValue::ExternalLinkage
                             : llvm::GlobalValue::PrivateLinkage;
-    return llvm::Function::Create(fn_ty, linkage, name, mod);
+    auto fn = llvm::Function::Create(fn_ty, linkage, name, mod);
+    fn->setCallingConv(hhvm ? llvm::CallingConv::HHVM : llvm::CallingConv::C);
+    fn->addParamAttr(sptr_idx, llvm::Attribute::NoAlias);
+    fn->addParamAttr(sptr_idx, llvm::Attribute::NoCapture);
+    fn->addParamAttr(sptr_idx, llvm::Attribute::getWithAlignment(ctx, 16));
+
+    return fn;
 }
 
 template<typename F>
 static llvm::Function* CreateFuncImpl(llvm::Module* mod, const std::string name,
                                       const F& f) {
-    llvm::Function* fn = CreateFunc(mod, name, /*external=*/false);
+    llvm::Function* fn = CreateFunc(mod, name, /*hhvm=*/false,
+                                    /*external=*/false);
     fn->addFnAttr(llvm::Attribute::AlwaysInline);
 
     llvm::BasicBlock* bb = llvm::BasicBlock::Create(mod->getContext(), "", fn);
@@ -277,6 +299,17 @@ int main(int argc, char** argv) {
     ll_config_set_hhvm(rlcfg, server_config.hhvm);
     ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
     ll_config_enable_overflow_intrinsics(rlcfg, false);
+    if (server_config.opt_callret_lifting) {
+        const char* tail_fn_name =
+            server_config.hhvm ? "instrew_tail_hhvm" : "instrew_tail_cdecl";
+        auto tail_fn = CreateFunc(&mod, tail_fn_name, server_config.hhvm);
+        ll_config_set_tail_func(rlcfg, llvm::wrap(tail_fn));
+
+        const char* call_fn_name =
+            server_config.hhvm ? "instrew_call_hhvm" : "instrew_call_cdecl";
+        auto call_fn = CreateFunc(&mod, call_fn_name, server_config.hhvm);
+        ll_config_set_call_func(rlcfg, llvm::wrap(call_fn));
+    }
     if (tool.MarkInstrs())
         ll_config_set_instr_marker(rlcfg, llvm::wrap(marker_fn));
     else // Remove useless marker function if tool doesn't require it.

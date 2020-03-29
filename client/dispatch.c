@@ -74,7 +74,11 @@ print_trace(struct State* state, uintptr_t addr) {
     }
 }
 
-static void dispatch_cdecl(uint64_t* cpu_state) {
+// Used for PLT.
+void dispatch_cdecl(uint64_t*);
+
+__attribute__((externally_visible))
+inline void dispatch_cdecl(uint64_t* cpu_state) {
     struct State* state = STATE_FROM_CPU_STATE(cpu_state);
     uint64_t(* quick_tlb)[2] = QTLB_FROM_CPU_STATE(cpu_state);
 
@@ -145,6 +149,38 @@ dispatch_hhvm_resolve: // stack alignment: hhvm
     mov r11, [r12 + 12 * 8];
     ret;
     .size dispatch_hhvm_resolve, .-dispatch_hhvm_resolve;
+
+    .align 16;
+    .global dispatch_hhvm_tail;
+    .type dispatch_hhvm_tail, @function;
+dispatch_hhvm_tail: // stack alignment: cdecl
+    QUICK_TLB_OFFSET_ASM(r14, rbx); // Compute quick_tlb hash to r14
+    add r14, [r12 - 0x10]; // r14 = quick_tlb entry
+    cmp rbx, [r14];
+    jne 1f;
+    jmp [r14 + 8];
+    .align 16;
+1:  push rax; // for stack alignment
+    call dispatch_hhvm_resolve;
+    pop rax;
+    jmp r14;
+    .size dispatch_hhvm_tail, .-dispatch_hhvm_tail;
+
+    .align 16;
+    .global dispatch_hhvm_call;
+    .type dispatch_hhvm_call, @function;
+dispatch_hhvm_call: // stack alignment: hhvm
+    QUICK_TLB_OFFSET_ASM(r14, rbx); // Compute quick_tlb hash to r14
+    add r14, [r12 - 0x10]; // r14 = quick_tlb entry
+    cmp rbx, [r14];
+    jne 1f;
+    call [r14 + 8];
+    ret;
+    .align 16;
+1:  call dispatch_hhvm_resolve;
+    call r14;
+    ret;
+    .size dispatch_hhvm_call, .-dispatch_hhvm_call;
 
     .align 16;
     .global dispatch_hhvm;

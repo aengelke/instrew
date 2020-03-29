@@ -28,6 +28,7 @@ INSTREW_SERVER_CONF_BOOL(12, opt_new_pass_manager, true)
 INSTREW_SERVER_CONF_BOOL(13, opt_unsafe_callret, true)
 INSTREW_SERVER_CONF_STR(14, tool, "")
 INSTREW_SERVER_CONF_STR(15, tool_config, "")
+INSTREW_SERVER_CONF_BOOL(16, opt_callret_lifting, true)
 #elif defined(INSTREW_CLIENT_CONF)
 // INSTREW_CLIENT_CONF_*(id, name)
 // The default value is zero-initialized, however, the server should always

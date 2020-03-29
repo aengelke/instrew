@@ -4,4 +4,8 @@ PLT_ENTRY("__divti3", emulate___divti3) // emulate.c
 PLT_ENTRY("__udivti3", emulate___udivti3) // emulate.c
 PLT_ENTRY("__modti3", emulate___modti3) // emulate.c
 PLT_ENTRY("__umodti3", emulate___umodti3) // emulate.c
+PLT_ENTRY("instrew_tail_cdecl", dispatch_cdecl) // dispatch.c
+PLT_ENTRY("instrew_call_cdecl", dispatch_cdecl) // dispatch.c
+PLT_ENTRY("instrew_tail_hhvm", dispatch_hhvm_tail) // dispatch.c
+PLT_ENTRY("instrew_call_hhvm", dispatch_hhvm_call) // dispatch.c
 PLT_ENTRY("memset", memset) // minilibc.c
