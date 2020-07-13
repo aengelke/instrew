@@ -13,7 +13,7 @@ void
 emulate_cpuid(uint64_t* cpu_state) {
     uint64_t rax = cpu_state[1], rcx = cpu_state[2];
     if (rax == 0) {
-        cpu_state[1] = 3; // eax = max input value for basic CPUID
+        cpu_state[1] = 7; // eax = max input value for basic CPUID
         cpu_state[2] = 0x6c65746e; // ecx = "ntel"
         cpu_state[3] = 0x49656e69; // edx = "ineI"
         cpu_state[4] = 0x756e6547; // ebx = "Genu"
@@ -28,11 +28,38 @@ emulate_cpuid(uint64_t* cpu_state) {
         cpu_state[2] = 0x80000000; // ecx = reserved
         cpu_state[3] = 0x80000000; // edx = reserved
         cpu_state[4] = 0x80000000; // ebx = reserved
-    } else { // page 3 (processor serial number; not supported)
+    } else if (rax == 3) { // page 3 (processor serial number; not supported)
         cpu_state[1] = 0x00000000; // eax = reserved
         cpu_state[2] = 0x00000000; // ecx = reserved
         cpu_state[3] = 0x00000000; // edx = reserved
         cpu_state[4] = 0x00000000; // ebx = reserved
+    } else if (rax == 4) { // page 4 (deterministic cache params; not implemented)
+        cpu_state[1] = 0x00000000; // eax = reserved
+        cpu_state[2] = 0x00000000; // ecx = reserved
+        cpu_state[3] = 0x00000000; // edx = reserved
+        cpu_state[4] = 0x00000000; // ebx = reserved
+    } else if (rax == 5) { // page 5 (monitor/mwait; mot implemented)
+        cpu_state[1] = 0x00000000; // eax = reserved
+        cpu_state[2] = 0x00000000; // ecx = reserved
+        cpu_state[3] = 0x00000000; // edx = reserved
+        cpu_state[4] = 0x00000000; // ebx = reserved
+    } else if (rax == 6) { // page 6 (thermal and power management; not supported)
+        cpu_state[1] = 0x00000000; // eax = reserved
+        cpu_state[2] = 0x00000000; // ecx = reserved
+        cpu_state[3] = 0x00000000; // edx = reserved
+        cpu_state[4] = 0x00000000; // ebx = reserved
+    } else { // page 7 (structured extended feature flags)
+        if (rcx == 0) {
+            cpu_state[1] = 0; // eax = maximum subleave supported
+            cpu_state[2] = 0x00000000; // ecx = reserved
+            cpu_state[3] = 0x00000000; // edx = reserved
+            cpu_state[4] = 0x00002200; // ebx = erms+deprecate fpu-cs/ds
+        } else {
+            cpu_state[1] = 0x00000000; // eax = reserved
+            cpu_state[2] = 0x00000000; // ecx = reserved
+            cpu_state[3] = 0x00000000; // edx = reserved
+            cpu_state[4] = 0x00000000; // ebx = reserved
+        }
     }
 }
 
