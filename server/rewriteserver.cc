@@ -372,7 +372,7 @@ int main(int argc, char** argv) {
             ll_func_dispose(rlfn);
 
             std::stringstream namebuf;
-            namebuf << std::hex << "func_" << addr;
+            namebuf << "Z" << std::oct << addr << "_" << std::hex << addr;
 
             fn->setName(namebuf.str());
 

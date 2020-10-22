@@ -19,12 +19,14 @@ struct Rtld {
     size_t objects_cap;
 
     void* plt;
+
+    void* server_funcs[16];
 };
 typedef struct Rtld Rtld;
 
 int rtld_init(Rtld* r);
 int rtld_resolve(Rtld* r, uintptr_t addr, void** out_entry);
 
-int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size);
+int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size);
 
 #endif

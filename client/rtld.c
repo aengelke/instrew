@@ -90,6 +90,19 @@ plt_create(void** out_plt) {
     return 0;
 }
 
+static uintptr_t
+rtld_decode_name(const char* name) {
+    if (name[0] != 'Z')
+        return 0;
+    uintptr_t addr = 0;
+    for (unsigned k = 1; name[k] && name[k] != '_'; k++) {
+        if (name[k] < '0' || name[k] >= '8')
+            return 0;
+        addr = (addr << 3) | (name[k] - '0');
+    }
+    return addr;
+}
+
 static RtldObject*
 rtld_hash_lookup(Rtld* r, uintptr_t addr) {
     size_t hash = RTLD_HASH(addr);
@@ -401,7 +414,7 @@ static int rtld_set(Rtld* r, uintptr_t addr, void* entry, void* obj_base,
     return 0;
 }
 
-int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size) {
+int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
     // "Link" (fix) given ELF file.
     //  - check that all sections are non-writable
     //  - check that there is no GOT/PLT (we would have to really link stuff
@@ -444,6 +457,17 @@ int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size) {
                 }
                 if (rtld_elf_resolve_sym(&re, i, j, &entry) < 0)
                     goto out;
+
+                // Determine address from name, encoded in Z<octaladdr>_ignored
+                const char* name = NULL;
+                rtld_elf_resolve_str(&re, elf_shnt->sh_link, elf_sym->st_name, &name);
+                if (!name)
+                    goto out;
+                uintptr_t addr = rtld_decode_name(name);
+                if (!addr) {
+                    dprintf(2, "invalid function name %s\n", name);
+                    goto out;
+                }
                 retval = rtld_set(r, addr, (void*) entry, obj_base, obj_size);
                 if (retval < 0)
                     goto out;
