@@ -386,8 +386,7 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
     return 0;
 }
 
-int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size,
-                    void** out_entry) {
+int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size) {
     // "Link" (fix) given ELF file.
     //  - check that all sections are non-writable
     //  - check that there is no GOT/PLT (we would have to really link stuff
@@ -462,8 +461,6 @@ int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size,
     obj->entry = (void*) entry;
     obj->base = obj_base;
     obj->size = obj_size;
-
-    *out_entry = (void*) entry;
 
     // Remap object file as executable
     retval = mprotect(obj_base, obj_size, PROT_READ|PROT_EXEC);

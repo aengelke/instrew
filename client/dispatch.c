@@ -28,7 +28,10 @@ resolve_func(struct State* state, uintptr_t addr) {
         if (retval < 0)
             goto error;
 
-        retval = rtld_add_object(&state->rtld, addr, obj_base, obj_size, &func);
+        retval = rtld_add_object(&state->rtld, addr, obj_base, obj_size);
+        if (retval < 0)
+            goto error;
+        retval = rtld_resolve(&state->rtld, addr, &func);
         if (retval < 0)
             goto error;
 
