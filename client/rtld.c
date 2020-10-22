@@ -386,6 +386,21 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
     return 0;
 }
 
+static int rtld_set(Rtld* r, uintptr_t addr, void* entry, void* obj_base,
+                    size_t obj_size) {
+    RtldObject* obj = rtld_hash_lookup(r, addr);
+    if (obj == NULL)
+        return -ENOSPC;
+    if (obj->addr != 0)
+        return -EEXIST;
+
+    obj->addr = addr;
+    obj->entry = entry;
+    obj->base = obj_base;
+    obj->size = obj_size;
+    return 0;
+}
+
 int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size) {
     // "Link" (fix) given ELF file.
     //  - check that all sections are non-writable
@@ -401,13 +416,12 @@ int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size) {
     if ((retval = rtld_elf_init(&re, obj_base, obj_size, r->plt)) < 0)
         goto out;
 
-    retval = -EINVAL;
-
     uintptr_t entry = 0;
 
     int i, j;
     Elf64_Shdr* elf_shnt;
     for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
+        retval = -EINVAL;
         switch (elf_shnt->sh_type) {
         case SHT_SYMTAB:
             // Requires handling: extract symbol
@@ -430,6 +444,9 @@ int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size) {
                 }
                 if (rtld_elf_resolve_sym(&re, i, j, &entry) < 0)
                     goto out;
+                retval = rtld_set(r, addr, (void*) entry, obj_base, obj_size);
+                if (retval < 0)
+                    goto out;
             }
             break;
         case SHT_RELA:
@@ -449,18 +466,6 @@ int rtld_add_object(Rtld* r, uintptr_t addr, void* obj_base, size_t obj_size) {
             goto out;
         }
     }
-
-    if (entry == 0)
-        goto out;
-
-    RtldObject* obj = rtld_hash_lookup(r, addr);
-    if (obj == NULL || obj->addr != 0)
-        goto out;
-
-    obj->addr = addr;
-    obj->entry = (void*) entry;
-    obj->base = obj_base;
-    obj->size = obj_size;
 
     // Remap object file as executable
     retval = mprotect(obj_base, obj_size, PROT_READ|PROT_EXEC);
