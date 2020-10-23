@@ -210,6 +210,19 @@ int main(int argc, char** argv) {
         return retval;
     }
 
+    void* initobj;
+    size_t initobj_size;
+    retval = translator_get_object(&state.translator, &initobj, &initobj_size);
+    if (retval < 0) {
+        puts("error: could not get initial object");
+        return retval;
+    }
+    retval = rtld_add_object(&state.rtld, initobj, initobj_size);
+    if (retval < 0) {
+        puts("error: could not get initial object");
+        return retval;
+    }
+
     dispatch_loop(&state);
 
 out:

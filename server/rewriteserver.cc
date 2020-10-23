@@ -46,9 +46,9 @@ struct StructOff {
 #undef RELLUME_PUBLIC_REG
 };
 
-static llvm::Function* CreateFunc(llvm::Module* mod, const std::string name,
-                                  bool hhvm = false, bool external = true) {
-    llvm::LLVMContext& ctx = mod->getContext();
+static llvm::Function* CreateFunc(llvm::LLVMContext& ctx,
+                                  const std::string name, bool hhvm = false,
+                                  bool external = true) {
     llvm::Type* sptr = llvm::Type::getInt8PtrTy(ctx, SPTR_ADDR_SPACE);
 
     llvm::FunctionType* fn_ty;
@@ -69,7 +69,7 @@ static llvm::Function* CreateFunc(llvm::Module* mod, const std::string name,
 
     auto linkage = external ? llvm::GlobalValue::ExternalLinkage
                             : llvm::GlobalValue::PrivateLinkage;
-    auto fn = llvm::Function::Create(fn_ty, linkage, name, mod);
+    auto fn = llvm::Function::Create(fn_ty, linkage, name);
     fn->setCallingConv(hhvm ? llvm::CallingConv::HHVM : llvm::CallingConv::C);
     fn->addParamAttr(sptr_idx, llvm::Attribute::NoAlias);
     fn->addParamAttr(sptr_idx, llvm::Attribute::NoCapture);
@@ -79,40 +79,39 @@ static llvm::Function* CreateFunc(llvm::Module* mod, const std::string name,
 }
 
 template<typename F>
-static llvm::Function* CreateFuncImpl(llvm::Module* mod, const std::string name,
-                                      const F& f) {
-    llvm::Function* fn = CreateFunc(mod, name, /*hhvm=*/false,
+static llvm::Function* CreateFuncImpl(llvm::LLVMContext& ctx,
+                                      const std::string name, const F& f) {
+    llvm::Function* fn = CreateFunc(ctx, name, /*hhvm=*/false,
                                     /*external=*/false);
     fn->addFnAttr(llvm::Attribute::AlwaysInline);
 
-    llvm::BasicBlock* bb = llvm::BasicBlock::Create(mod->getContext(), "", fn);
+    llvm::BasicBlock* bb = llvm::BasicBlock::Create(ctx, "", fn);
     llvm::IRBuilder<> irb(bb);
     f(irb, fn->arg_begin());
     return fn;
 }
 
-static llvm::Function* CreateNoopFn(llvm::Module* mod) {
-    return CreateFuncImpl(mod, "noop_stub", [](llvm::IRBuilder<>& irb, llvm::Value* arg) {
+static llvm::Function* CreateNoopFn(llvm::LLVMContext& ctx) {
+    return CreateFuncImpl(ctx, "noop_stub", [](llvm::IRBuilder<>& irb, llvm::Value* arg) {
         irb.CreateRetVoid();
     });
 }
 
-static llvm::Function* CreateRdtscFn(llvm::Module* mod) {
-    return CreateFuncImpl(mod, "rdtsc", [](llvm::IRBuilder<>& irb, llvm::Value* arg) {
+static llvm::Function* CreateRdtscFn(llvm::LLVMContext& ctx) {
+    return CreateFuncImpl(ctx, "rdtsc", [](llvm::IRBuilder<>& irb, llvm::Value* arg) {
         irb.CreateStore(irb.getInt64(0), StructOff::RAX.PtrTo(irb, arg));
         irb.CreateStore(irb.getInt64(0), StructOff::RDX.PtrTo(irb, arg));
         irb.CreateRetVoid();
     });
 }
 
-static llvm::Function* CreateMarkerFn(llvm::Module* mod) {
-    llvm::LLVMContext& ctx = mod->getContext();
+static llvm::Function* CreateMarkerFn(llvm::LLVMContext& ctx) {
     auto marker_fn_ty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
             {llvm::Type::getInt64Ty(ctx), llvm::Type::getMetadataTy(ctx)},
             false);
     return llvm::Function::Create(marker_fn_ty,
                                   llvm::GlobalValue::PrivateLinkage,
-                                  "instrew_instr_marker", mod);
+                                  "instrew_instr_marker");
 }
 
 class RemoteMemory {
@@ -275,20 +274,20 @@ int main(int argc, char** argv) {
 
     // Create module, functions will be deleted after code generation.
     llvm::LLVMContext ctx;
-    llvm::Module mod("mod", ctx);
 
-    // Add declarations (and definitions) of helper functions to module. We do
-    // this before initializing the tool to give tools a chance to cache
-    // references or modify such functions globally.
-    auto syscall_fn = CreateFunc(&mod, "syscall");
-    auto noop_fn = CreateNoopFn(&mod);
-    auto cpuid_fn = CreateFunc(&mod, "cpuid");
-    auto rdtsc_fn = CreateRdtscFn(&mod);
-    auto marker_fn = CreateMarkerFn(&mod);
+    llvm::SmallVector<llvm::Function*, 8> helper_fns;
+    llvm::SmallVector<llvm::Function*, 2> lift_fns;
 
-    InstrumenterTool tool;
-    if (tool.Init(server_config, &mod) != 0)
-        return 1;
+    auto noop_fn = CreateNoopFn(ctx);
+    lift_fns.push_back(noop_fn);
+    auto rdtsc_fn = CreateRdtscFn(ctx);
+    lift_fns.push_back(rdtsc_fn);
+    auto syscall_fn = CreateFunc(ctx, "syscall");
+    helper_fns.push_back(syscall_fn);
+    auto cpuid_fn = CreateFunc(ctx, "cpuid");
+    helper_fns.push_back(cpuid_fn);
+    // This isn't added to lift_fns, here! Only, when the tool requires it.
+    auto marker_fn = CreateMarkerFn(ctx);
 
     // Create rellume config
     LLConfig* rlcfg = ll_config_new();
@@ -303,30 +302,92 @@ int main(int argc, char** argv) {
     if (server_config.opt_callret_lifting) {
         const char* tail_fn_name =
             server_config.hhvm ? "instrew_tail_hhvm" : "instrew_tail_cdecl";
-        auto tail_fn = CreateFunc(&mod, tail_fn_name, server_config.hhvm);
+        auto tail_fn = CreateFunc(ctx, tail_fn_name, server_config.hhvm);
+        helper_fns.push_back(tail_fn);
         ll_config_set_tail_func(rlcfg, llvm::wrap(tail_fn));
 
         const char* call_fn_name =
             server_config.hhvm ? "instrew_call_hhvm" : "instrew_call_cdecl";
-        auto call_fn = CreateFunc(&mod, call_fn_name, server_config.hhvm);
+        auto call_fn = CreateFunc(ctx, call_fn_name, server_config.hhvm);
+        helper_fns.push_back(call_fn);
         ll_config_set_call_func(rlcfg, llvm::wrap(call_fn));
     }
-    if (tool.MarkInstrs())
-        ll_config_set_instr_marker(rlcfg, llvm::wrap(marker_fn));
-    else // Remove useless marker function if tool doesn't require it.
-        marker_fn->eraseFromParent();
     ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
     ll_config_set_instr_impl(rlcfg, FDI_CPUID, llvm::wrap(cpuid_fn));
     ll_config_set_instr_impl(rlcfg, FDI_RDTSC, llvm::wrap(rdtsc_fn));
     ll_config_set_instr_impl(rlcfg, FDI_FLDCW, llvm::wrap(noop_fn));
     ll_config_set_instr_impl(rlcfg, FDI_LDMXCSR, llvm::wrap(noop_fn));
 
-    // Store all helper functions in a vector, so that we can easily remove them
-    // before optimizations/code generation and add them back afterwards.
-    std::vector<llvm::Function*> helper_fns;
-    helper_fns.reserve(mod.size());
-    for (llvm::Function& fn : mod.functions())
-        helper_fns.push_back(&fn);
+    InstrumenterTool tool;
+    {
+        llvm::Module init_mod("mod", ctx);
+
+        for (const auto& helper_fn : helper_fns)
+            init_mod.getFunctionList().push_back(helper_fn);
+        init_mod.getFunctionList().push_back(marker_fn);
+
+        llvm::Type* i8p_ty = llvm::Type::getInt8PtrTy(ctx);
+        llvm::SmallVector<llvm::Constant*, 8> used;
+        for (const auto& helper_fn : helper_fns)
+            used.push_back(llvm::ConstantExpr::getPointerCast(helper_fn, i8p_ty));
+        llvm::ArrayType* used_ty = llvm::ArrayType::get(i8p_ty, used.size());
+        llvm::GlobalVariable* llvm_used = new llvm::GlobalVariable(
+                init_mod, used_ty, /*const=*/false,
+                llvm::GlobalValue::AppendingLinkage,
+                llvm::ConstantArray::get(used_ty, used), "llvm.used");
+        llvm_used->setSection("llvm.metadata");
+
+        if (tool.Init(server_config, &init_mod) != 0)
+            return 1;
+        if (tool.MarkInstrs()) {
+            lift_fns.push_back(marker_fn);
+            marker_fn->removeFromParent();
+            ll_config_set_instr_marker(rlcfg, llvm::wrap(marker_fn));
+        } else {
+            // Remove useless marker function if tool doesn't require it.
+            marker_fn->eraseFromParent();
+        }
+
+        // Rename all tool-defined functions appropriately.
+        uint64_t zval_cnt = 1ull << 63;
+        for (llvm::Function& fn : init_mod.functions()) {
+            if (fn.empty())
+                continue;
+            std::stringstream namebuf;
+            namebuf << "Z" << std::oct << zval_cnt++ << "_";
+            fn.setName(llvm::Twine(namebuf.str() + fn.getName()));
+        }
+
+        codegen.GenerateCode(&init_mod);
+        conn.SendMsg(Msg::S_OBJECT, obj_buffer.data(), obj_buffer.size());
+
+        for (llvm::Function& fn : init_mod.functions()) {
+            if (!fn.hasExternalLinkage() || fn.empty())
+                continue;
+            fn.deleteBody();
+            helper_fns.push_back(&fn);
+        }
+
+        for (const auto& helper_fn : helper_fns)
+            helper_fn->removeFromParent();
+    }
+
+    llvm::Module mod("mod", ctx);
+    {
+        for (const auto& helper_fn : helper_fns)
+            mod.getFunctionList().push_back(helper_fn);
+
+        llvm::Type* i8p_ty = llvm::Type::getInt8PtrTy(ctx);
+        llvm::SmallVector<llvm::Constant*, 8> used;
+        for (const auto& helper_fn : helper_fns)
+            used.push_back(llvm::ConstantExpr::getPointerCast(helper_fn, i8p_ty));
+        llvm::ArrayType* used_ty = llvm::ArrayType::get(i8p_ty, used.size());
+        llvm::GlobalVariable* llvm_used = new llvm::GlobalVariable(
+                mod, used_ty, /*const=*/false,
+                llvm::GlobalValue::AppendingLinkage,
+                llvm::ConstantArray::get(used_ty, used), "llvm.used");
+        llvm_used->setSection("llvm.metadata");
+    }
 
     while (true) {
         Msg::Id msgid = conn.RecvMsg();
@@ -355,6 +416,9 @@ int main(int argc, char** argv) {
             std::chrono::steady_clock::time_point time_lifting_start;
             if (server_config.debug_profile_server)
                 time_lifting_start = std::chrono::steady_clock::now();
+
+            for (const auto& lift_fn : lift_fns)
+                mod.getFunctionList().push_back(lift_fn);
 
             LLFunc* rlfn = ll_func_new(llvm::wrap(&mod), rlcfg);
             bool decode_fail = ll_func_decode_cfg(rlfn, addr,
@@ -391,6 +455,12 @@ int main(int argc, char** argv) {
                 time_instrument_start = std::chrono::steady_clock::now();
 
             fn = tool.Instrument(fn);
+
+            // Remove functions required for lifting before optimization. This
+            // includes the instr marker, which will either get optimized away,
+            // or be passed to code generation, causing compilation failure.
+            for (auto* lift_fn : lift_fns)
+                lift_fn->removeFromParent();
 
             if (server_config.debug_profile_server)
                 dur_instrument += std::chrono::steady_clock::now() - time_instrument_start;
@@ -455,10 +525,6 @@ int main(int argc, char** argv) {
 
             fn->eraseFromParent();
 
-            // Re-add helper functions removed previously
-            for (const auto& helper_fn : helper_fns)
-                if (!helper_fn->getParent())
-                    mod.getFunctionList().push_back(helper_fn);
         } else {
             std::cerr << "unexpected msg " << msgid << std::endl;
             return 1;
