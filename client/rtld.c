@@ -203,6 +203,10 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* 
                 }
             }
 
+            uintptr_t addr = rtld_decode_name(name);
+            if (addr && !rtld_resolve(re->rtld, addr, (void**) out_addr))
+                return 0;
+
             dprintf(2, "undefined symbol reference to %s\n", name);
             return -EINVAL;
         }
@@ -450,11 +454,6 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
                     continue;
                 if (ELF64_ST_VISIBILITY(elf_sym->st_other) != STV_DEFAULT)
                     continue;
-                // Object may only define a single function
-                if (entry != 0) {
-                    dprintf(2, "object defines multiple function\n");
-                    goto out;
-                }
                 if (rtld_elf_resolve_sym(&re, i, j, &entry) < 0)
                     goto out;
 
