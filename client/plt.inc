@@ -9,3 +9,4 @@ PLT_ENTRY("instrew_call_cdecl", dispatch_cdecl) // dispatch.c
 PLT_ENTRY("instrew_tail_hhvm", dispatch_hhvm_tail) // dispatch.c
 PLT_ENTRY("instrew_call_hhvm", dispatch_hhvm_call) // dispatch.c
 PLT_ENTRY("memset", memset) // minilibc.c
+PLT_ENTRY("dprintf", dprintf) // minilibc.c

@@ -8,3 +8,8 @@ shared_library('tool-icount', 'icount.cpp',
                dependencies: [instrew_api],
                install: true,
                install_dir: get_option('libdir')/'instrew')
+shared_library('tool-strace', 'strace.cpp',
+               name_prefix: '',
+               dependencies: [instrew_api],
+               install: true,
+               install_dir: get_option('libdir')/'instrew')
