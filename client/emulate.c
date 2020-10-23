@@ -292,23 +292,3 @@ end:
 
     cpu_state[1] = res;
 }
-
-__int128
-emulate___divti3(__int128 a, __int128 b) {
-    return a / b;
-}
-
-unsigned __int128
-emulate___udivti3(unsigned __int128 a, unsigned __int128 b) {
-    return a / b;
-}
-
-__int128
-emulate___modti3(__int128 a, __int128 b) {
-    return a % b;
-}
-
-unsigned __int128
-emulate___umodti3(unsigned __int128 a, unsigned __int128 b) {
-    return a % b;
-}
