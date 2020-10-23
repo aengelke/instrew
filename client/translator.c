@@ -9,6 +9,12 @@
 
 #include <memory.h>
 
+enum MsgId {
+#define INSTREW_MESSAGE_ID(id, name) MSGID_ ## name = id,
+#include "instrew-protocol.inc"
+#undef INSTREW_MESSAGE_ID
+};
+
 struct spawn_args {
     int pipes[6];
     const char* tool;
@@ -86,6 +92,7 @@ int translator_init(Translator* t, const char* tool) {
     }
 
     t->written_bytes = 0;
+    t->last_hdr = (TranslatorMsgHdr) {MSGID_UNKNOWN, 0};
 
     return ret;
 }
@@ -93,25 +100,34 @@ int translator_init(Translator* t, const char* tool) {
 int translator_fini(Translator* t) {
     close(t->rd_fd);
     close(t->wr_fd);
+    return 0;
 }
 
-enum MsgId {
-#define INSTREW_MESSAGE_ID(id, name) MSGID_ ## name = id,
-#include "instrew-protocol.inc"
-#undef INSTREW_MESSAGE_ID
-};
-
-struct MsgHdr {
-    uint32_t id;
-    int32_t sz;
-};
-
-int translator_config_begin(Translator* t) {
-    struct MsgHdr hdr = {MSGID_C_INIT, -1};
+static int translator_hdr_send(Translator* t, uint32_t id, int32_t sz) {
+    if (t->last_hdr.id != MSGID_UNKNOWN)
+        return -EPROTO;
     int ret;
+    TranslatorMsgHdr hdr = {id, sz};
     if ((ret = write_full(t->wr_fd, &hdr, sizeof(hdr))) != sizeof(hdr))
         return ret;
     return 0;
+}
+
+static int32_t translator_hdr_recv(Translator* t, uint32_t id) {
+    if (t->last_hdr.id == MSGID_UNKNOWN) {
+        int ret = read_full(t->rd_fd, &t->last_hdr, sizeof(t->last_hdr));
+        if (ret != sizeof(t->last_hdr))
+            return ret;
+    }
+    if (t->last_hdr.id != id)
+        return -EPROTO;
+    int32_t sz = t->last_hdr.sz;
+    t->last_hdr = (TranslatorMsgHdr) {MSGID_UNKNOWN, 0};
+    return sz;
+}
+
+int translator_config_begin(Translator* t) {
+    return translator_hdr_send(t, MSGID_C_INIT, -1);
 }
 
 int translator_config_end(Translator* t) {
@@ -173,38 +189,50 @@ static int translator_config_write_str(Translator* t, uint8_t id, const char* va
 #undef INSTREW_SERVER_CONF_INT32
 #undef INSTREW_SERVER_CONF_STR
 
+int translator_get_object(Translator* t, void** out_obj, size_t* out_obj_size) {
+    int32_t sz = translator_hdr_recv(t, MSGID_S_OBJECT);
+    if (sz < 0)
+        return sz;
+
+    void* obj = mem_alloc(sz);
+    if (BAD_ADDR(obj))
+        return (int) (uintptr_t) obj;
+    int ret = read_full(t->rd_fd, obj, sz);
+    if (ret != (ssize_t) sz)
+        return ret;
+
+    *out_obj = obj;
+    *out_obj_size = sz;
+
+    return 0;
+}
+
 int translator_get(Translator* t, uintptr_t addr, void** out_obj,
                    size_t* out_obj_size) {
     int ret;
-    struct MsgHdr hdr;
-
-    hdr.id = MSGID_C_TRANSLATE;
-    hdr.sz = 8;
-    if ((ret = write_full(t->wr_fd, &hdr, sizeof(hdr))) != sizeof(hdr))
+    if ((ret = translator_hdr_send(t, MSGID_C_TRANSLATE, 8)) != 0)
         return ret;
     if ((ret = write_full(t->wr_fd, &addr, sizeof(addr))) != sizeof(addr))
         return ret;
 
     while (true) {
-        if ((ret = read_full(t->rd_fd, &hdr, sizeof(hdr))) != sizeof(hdr))
-            return ret;
-        if (hdr.id == MSGID_S_OBJECT)
-            break;
-        if (hdr.id != MSGID_S_MEMREQ)
-            return -1;
+        int32_t sz = translator_hdr_recv(t, MSGID_S_MEMREQ);
+        if (sz == -EPROTO) {
+            return translator_get_object(t, out_obj, out_obj_size);
+        } else if (sz < 0) {
+            return sz;
+        }
 
         // handle memory request
         struct { uint64_t addr; size_t buf_sz; } memrq;
-        if (hdr.sz != sizeof(memrq))
+        if (sz != sizeof(memrq))
             return -1;
         if ((ret = read_full(t->rd_fd, &memrq, sizeof(memrq))) != sizeof(memrq))
             return ret;
         if (memrq.buf_sz > 0x1000)
             memrq.buf_sz = 0x1000;
 
-        hdr.id = MSGID_C_MEMBUF;
-        hdr.sz = memrq.buf_sz + 1; // add additional status code
-        if ((ret = write_full(t->wr_fd, &hdr, sizeof(hdr))) != sizeof(hdr))
+        if ((ret = translator_hdr_send(t, MSGID_C_MEMBUF, memrq.buf_sz+1)) < 0)
             return ret;
 
         uint8_t failed = 0;
@@ -227,17 +255,4 @@ int translator_get(Translator* t, uintptr_t addr, void** out_obj,
 
         t->written_bytes += memrq.buf_sz;
     }
-
-    void* obj = mem_alloc(hdr.sz);
-    if (BAD_ADDR(obj))
-        return (int) (uintptr_t) obj;
-    if ((ret = read_full(t->rd_fd, obj, hdr.sz)) != (ssize_t) hdr.sz)
-        return ret;
-
-    // write_full(1, obj, hdr.sz);
-
-    *out_obj = obj;
-    *out_obj_size = hdr.sz;
-
-    return 0;
 }

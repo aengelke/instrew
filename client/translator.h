@@ -2,16 +2,24 @@
 #ifndef _INSTREW_TRANSLATOR_H
 #define _INSTREW_TRANSLATOR_H
 
+typedef struct TranslatorMsgHdr TranslatorMsgHdr;
+struct TranslatorMsgHdr {
+    uint32_t id;
+    int32_t sz;
+};
+
 struct Translator {
     int rd_fd;
     int wr_fd;
 
     size_t written_bytes;
+    TranslatorMsgHdr last_hdr;
 };
 
 typedef struct Translator Translator;
 
 int translator_init(Translator* t, const char* tool);
+int translator_get_object(Translator* t, void** out_obj, size_t* out_obj_size);
 int translator_get(Translator* t, uintptr_t addr, void** out_obj,
                    size_t* out_obj_size);
 
