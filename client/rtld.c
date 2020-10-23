@@ -126,19 +126,19 @@ struct RtldElf {
     Elf64_Shdr* re_shdr;
 
     // Global PLT
-    void* plt;
+    Rtld* rtld;
 };
 typedef struct RtldElf RtldElf;
 
 static int
-rtld_elf_init(RtldElf* re, void* obj_base, size_t obj_size, void* plt) {
+rtld_elf_init(RtldElf* re, void* obj_base, size_t obj_size, Rtld* rtld) {
     if (obj_size < sizeof(Elf64_Ehdr))
         goto err;
 
     re->base = obj_base;
     re->size = obj_size;
     re->re_ehdr = obj_base;
-    re->plt = plt;
+    re->rtld = rtld;
 
     if (memcmp(re->re_ehdr, ELFMAG, SELFMAG) != 0)
         goto err;
@@ -198,7 +198,7 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* 
             // Search through PLT
             for (size_t i = 0; plt_entries[i].name; i++) {
                 if (!strcmp(name, plt_entries[i].name)) {
-                    *out_addr = (uintptr_t) re->plt + i * PLT_FUNC_SIZE;
+                    *out_addr = (uintptr_t) re->rtld->plt + i * PLT_FUNC_SIZE;
                     return 0;
                 }
             }
@@ -426,7 +426,7 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
     int retval;
 
     RtldElf re;
-    if ((retval = rtld_elf_init(&re, obj_base, obj_size, r->plt)) < 0)
+    if ((retval = rtld_elf_init(&re, obj_base, obj_size, r)) < 0)
         goto out;
 
     uintptr_t entry = 0;
