@@ -19,6 +19,7 @@ struct Translator {
 typedef struct Translator Translator;
 
 int translator_init(Translator* t, const char* tool);
+int translator_fini(Translator* t);
 int translator_get_object(Translator* t, void** out_obj, size_t* out_obj_size);
 int translator_get(Translator* t, uintptr_t addr, void** out_obj,
                    size_t* out_obj_size);

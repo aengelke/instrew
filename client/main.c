@@ -118,8 +118,6 @@ int main(int argc, char** argv) {
         return retval;
     }
 
-    bool hhvm_dispatch = false;
-
     retval = translator_config_begin(&state.translator);
     retval = translator_config_tool(&state.translator, tool_path);
     retval = translator_config_tool_config(&state.translator, tool_config);
@@ -137,11 +135,8 @@ int main(int argc, char** argv) {
     retval |= translator_config_cpu(&state.translator, "x86-64");
     retval |= translator_config_cpu_features(&state.translator, "+nopl");
     retval |= translator_config_native_segments(&state.translator, true);
+    retval |= translator_config_hhvm(&state.translator, state.config.hhvm);
     state.config.native_segment_regs = true; // TODO: fetch from S_INIT
-    if (state.config.hhvm) {
-        retval |= translator_config_hhvm(&state.translator, true);
-        hhvm_dispatch = true; // TODO: fetch from S_INIT
-    }
 #endif
     retval = translator_config_end(&state.translator);
     if (retval != 0) {

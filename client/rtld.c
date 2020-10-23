@@ -242,6 +242,8 @@ rtld_elf_add_stub(uintptr_t sym, uintptr_t* out_stub) {
     *out_stub = (uintptr_t) stub;
     return 0;
 #else
+    (void) sym;
+    (void) out_stub;
     return -EOPNOTSUPP;
 #endif
 }
