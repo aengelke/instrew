@@ -140,6 +140,7 @@ int main(int argc, char** argv) {
     retval = translator_config_debug_dump_ir(&state.translator, state.config.verbose);
     retval = translator_config_debug_dump_objects(&state.translator, state.config.d_dump_objects);
     retval = translator_config_debug_time_passes(&state.translator, state.config.profile_llvm_passes);
+    retval = translator_config_guest_arch(&state.translator, info.machine);
 #ifdef __x86_64__
     retval |= translator_config_triple(&state.translator, "x86_64-unknown-linux-gnu");
     retval |= translator_config_cpu(&state.translator, "x86-64");

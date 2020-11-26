@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <dlfcn.h>
+#include <elf.h>
 #include <fstream>
 #include <iostream>
 #include <unistd.h>
@@ -278,14 +279,6 @@ int main(int argc, char** argv) {
     llvm::SmallVector<llvm::Function*, 8> helper_fns;
     llvm::SmallVector<llvm::Function*, 2> lift_fns;
 
-    auto noop_fn = CreateNoopFn(ctx);
-    lift_fns.push_back(noop_fn);
-    auto rdtsc_fn = CreateRdtscFn(ctx);
-    lift_fns.push_back(rdtsc_fn);
-    auto syscall_fn = CreateFunc(ctx, "syscall");
-    helper_fns.push_back(syscall_fn);
-    auto cpuid_fn = CreateFunc(ctx, "cpuid");
-    helper_fns.push_back(cpuid_fn);
     // This isn't added to lift_fns, here! Only, when the tool requires it.
     auto marker_fn = CreateMarkerFn(ctx);
 
@@ -293,10 +286,8 @@ int main(int argc, char** argv) {
     LLConfig* rlcfg = ll_config_new();
     ll_config_enable_verify_ir(rlcfg, false);
     ll_config_set_call_ret_clobber_flags(rlcfg, server_config.opt_unsafe_callret);
-    ll_config_set_use_native_segment_base(rlcfg, server_config.native_segments);
     ll_config_enable_full_facets(rlcfg, server_config.opt_full_facets);
     ll_config_set_position_independent_code(rlcfg, false);
-    ll_config_set_hhvm(rlcfg, server_config.hhvm);
     ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
     ll_config_enable_overflow_intrinsics(rlcfg, false);
     if (server_config.opt_callret_lifting) {
@@ -312,11 +303,28 @@ int main(int argc, char** argv) {
         helper_fns.push_back(call_fn);
         ll_config_set_call_func(rlcfg, llvm::wrap(call_fn));
     }
-    ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
-    ll_config_set_instr_impl(rlcfg, FDI_CPUID, llvm::wrap(cpuid_fn));
-    ll_config_set_instr_impl(rlcfg, FDI_RDTSC, llvm::wrap(rdtsc_fn));
-    ll_config_set_instr_impl(rlcfg, FDI_FLDCW, llvm::wrap(noop_fn));
-    ll_config_set_instr_impl(rlcfg, FDI_LDMXCSR, llvm::wrap(noop_fn));
+    if (server_config.guest_arch == EM_X86_64) {
+        ll_config_set_use_native_segment_base(rlcfg, server_config.native_segments);
+        ll_config_set_hhvm(rlcfg, server_config.hhvm);
+
+        auto syscall_fn = CreateFunc(ctx, "syscall");
+        helper_fns.push_back(syscall_fn);
+        ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
+
+        auto noop_fn = CreateNoopFn(ctx);
+        lift_fns.push_back(noop_fn);
+        auto rdtsc_fn = CreateRdtscFn(ctx);
+        lift_fns.push_back(rdtsc_fn);
+        auto cpuid_fn = CreateFunc(ctx, "cpuid");
+        helper_fns.push_back(cpuid_fn);
+        ll_config_set_instr_impl(rlcfg, FDI_CPUID, llvm::wrap(cpuid_fn));
+        ll_config_set_instr_impl(rlcfg, FDI_RDTSC, llvm::wrap(rdtsc_fn));
+        ll_config_set_instr_impl(rlcfg, FDI_FLDCW, llvm::wrap(noop_fn));
+        ll_config_set_instr_impl(rlcfg, FDI_LDMXCSR, llvm::wrap(noop_fn));
+    } else {
+        std::cerr << "error: unsupported architecture" << std::endl;
+        return 1;
+    }
 
     InstrumenterTool tool;
     {
