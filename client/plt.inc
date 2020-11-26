@@ -1,4 +1,5 @@
 PLT_ENTRY("syscall", emulate_syscall) // emulate.c
+PLT_ENTRY("syscall_rv64", emulate_rv64_syscall) // emulate.c
 PLT_ENTRY("cpuid", emulate_cpuid) // emulate.c
 PLT_ENTRY("__divti3", __divti3) // libgcc
 PLT_ENTRY("__udivti3", __udivti3) // libgcc

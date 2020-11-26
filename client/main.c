@@ -209,6 +209,8 @@ int main(int argc, char** argv) {
     *((uint64_t*) state.cpu) = (uint64_t) info.entry;
     if (info.machine == EM_X86_64) {
         *((uint64_t*) state.cpu + 5) = (uint64_t) stack_top;
+    } else if (info.machine == EM_RISCV) {
+        *((uint64_t*) state.cpu + 3) = (uint64_t) stack_top;
     } else {
         puts("error: unsupported architecture");
         return -ENOEXEC;

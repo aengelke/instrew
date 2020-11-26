@@ -322,6 +322,12 @@ int main(int argc, char** argv) {
         ll_config_set_instr_impl(rlcfg, FDI_RDTSC, llvm::wrap(rdtsc_fn));
         ll_config_set_instr_impl(rlcfg, FDI_FLDCW, llvm::wrap(noop_fn));
         ll_config_set_instr_impl(rlcfg, FDI_LDMXCSR, llvm::wrap(noop_fn));
+    } else if (server_config.guest_arch == EM_RISCV) {
+        ll_config_set_architecture(rlcfg, "rv64");
+
+        auto syscall_fn = CreateFunc(ctx, "syscall_rv64");
+        helper_fns.push_back(syscall_fn);
+        ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
     } else {
         std::cerr << "error: unsupported architecture" << std::endl;
         return 1;

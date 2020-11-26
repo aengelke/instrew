@@ -4,6 +4,7 @@
 #include <emulate.h>
 
 #include <asm/stat.h>
+#include <linux/utsname.h>
 
 #include <state.h>
 
@@ -291,4 +292,148 @@ end:
     //         nr, arg0, arg1, arg2, arg3, arg4, arg5, res, res);
 
     cpu_state[1] = res;
+}
+
+void emulate_rv64_syscall(uint64_t* cpu_state);
+
+void
+emulate_rv64_syscall(uint64_t* cpu_state) {
+    uint64_t arg0 = cpu_state[11], arg1 = cpu_state[12], arg2 = cpu_state[13],
+             arg3 = cpu_state[14], arg4 = cpu_state[15], arg5 = cpu_state[16];
+    uint64_t nr = cpu_state[18]; // a7/x17
+    ssize_t res = -ENOSYS;
+
+    switch (nr) {
+    native:
+        res = syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
+        break;
+
+    default:
+    unhandled:
+        dprintf(2, "unhandled syscall %u (%lx %lx %lx %lx %lx %lx)\n",
+                nr, arg0, arg1, arg2, arg3, arg4, arg5);
+        _exit(1);
+        break;
+
+    case 17: nr = __NR_getcwd; goto native;
+    case 25: // fcntl
+        switch (arg0) {
+        case F_DUPFD:
+        case F_GETFD:
+        case F_SETFD:
+        case F_GETFL:
+        case F_SETFL:
+        case F_GETLK: nr = __NR_fcntl; goto native;
+        default: goto unhandled;
+        }
+    case 29: nr = __NR_ioctl; goto native; // TODO: catch dangerous commands
+    case 35: nr = __NR_unlinkat; goto native;
+    case 46: nr = __NR_ftruncate; goto native;
+    case 48: nr = __NR_faccessat; goto native;
+    case 49: nr = __NR_chdir; goto native;
+    case 52: nr = __NR_fchmod; goto native;
+    case 55: nr = __NR_fchown; goto native;
+    case 56: nr = __NR_openat; goto native;
+    case 57: nr = __NR_close; goto native;
+    case 59: nr = __NR_pipe2; goto native;
+    case 61: nr = __NR_getdents64; goto native;
+    case 62: nr = __NR_lseek; goto native;
+    case 63: nr = __NR_read; goto native;
+    case 64: nr = __NR_write; goto native;
+    case 66: nr = __NR_writev; goto native;
+    case 78: nr = __NR_readlinkat; goto native;
+    case 80:
+        arg2 = arg1;
+        arg1 = (uint64_t) "";
+        arg3 = 0;
+        /* FALLTHROUGH */
+    case 79:;
+        struct stat tmp_struct;
+        uintptr_t tmp_addr = (uintptr_t) &tmp_struct;
+        res = syscall(__NR_newfstatat, arg0, arg1, tmp_addr, arg3, 0, 0);
+        if (res == 0) {
+            struct {
+                unsigned long           st_dev;
+                unsigned long           st_ino;
+                unsigned int            st_mode;
+                unsigned int            st_nlink;
+                unsigned int            st_uid;
+                unsigned int            st_gid;
+                unsigned long           st_rdev;
+                long                    __pad0;
+                long                    st_size;
+                int                     st_blksize;
+                int                     __pad1;
+                long                    st_blocks;
+                unsigned long           st_atime;
+                unsigned long           st_atime_nsec;
+                unsigned long           st_mtime;
+                unsigned long           st_mtime_nsec;
+                unsigned long           st_ctime;
+                unsigned long           st_ctime_nsec;
+                int                     __unused[2];
+            } __attribute__((packed))* tgt = (void*) arg2;
+            tgt->st_dev = tmp_struct.st_dev;
+            tgt->st_ino = tmp_struct.st_ino;
+            tgt->st_nlink = tmp_struct.st_nlink;
+            tgt->st_mode = tmp_struct.st_mode;
+            tgt->st_uid = tmp_struct.st_uid;
+            tgt->st_gid = tmp_struct.st_gid;
+            tgt->st_rdev = tmp_struct.st_rdev;
+            tgt->st_size = tmp_struct.st_size;
+            tgt->st_blksize = tmp_struct.st_blksize;
+            tgt->st_blocks = tmp_struct.st_blocks;
+            tgt->st_atime = tmp_struct.st_atime;
+            tgt->st_atime_nsec = tmp_struct.st_atime_nsec;
+            tgt->st_mtime = tmp_struct.st_mtime;
+            tgt->st_mtime_nsec = tmp_struct.st_mtime_nsec;
+            tgt->st_ctime = tmp_struct.st_ctime;
+            tgt->st_ctime_nsec = tmp_struct.st_ctime_nsec;
+        }
+        break;
+
+    case 93: nr = __NR_exit; goto native;
+    case 94: nr = __NR_exit_group; goto native;
+    case 96: nr = __NR_set_tid_address; goto native;
+    case 99: nr = __NR_set_robust_list; goto native;
+    case 100: nr = __NR_get_robust_list; goto native;
+    case 113: nr = __NR_clock_gettime; goto native;
+    case 131: nr = __NR_tgkill; goto native;
+    case 160:
+        res = syscall(__NR_uname, arg0, 0, 0, 0, 0, 0);
+        if (res == 0) {
+            // Emulate kernel 5.0.0 -- glibc checks kernel versions.
+            struct new_utsname* buf = (void*) arg0;
+            if (buf->release[0] <= '4' && buf->release[1] == '.')
+                memcpy(buf->release, "5.0.0", sizeof "5.0.0");
+        }
+        break;
+    case 169: nr = __NR_gettimeofday; goto native;
+    case 172: nr = __NR_getpid; goto native;
+    case 173: nr = __NR_getppid; goto native;
+    case 174: nr = __NR_getuid; goto native;
+    case 175: nr = __NR_geteuid; goto native;
+    case 176: nr = __NR_getgid; goto native;
+    case 177: nr = __NR_getegid; goto native;
+    case 178: nr = __NR_gettid; goto native;
+    case 179: nr = __NR_sysinfo; goto native;
+    case 214: nr = __NR_brk; goto native;
+    case 215: nr = __NR_munmap; goto native;
+    case 216: nr = __NR_mremap; goto native;
+    case 222: nr = __NR_mmap; goto native;
+    case 260: nr = __NR_wait4; goto native;
+    case 261: nr = __NR_prlimit64; goto native;
+    case 276: nr = __NR_renameat2; goto native;
+    case 278: nr = __NR_getrandom; goto native;
+
+    // Finally, some syscalls are not supported yet.
+    case 132: // sigaltstack
+    case 134: // rt_sigaction
+    case 135: // rt_sigprocmask
+    case 139: // rt_sigreturn
+        res = -ENOSYS;
+        break;
+    }
+
+    cpu_state[11] = res;
 }
