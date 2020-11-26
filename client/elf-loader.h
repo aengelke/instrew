@@ -6,6 +6,7 @@
 #include <stddef.h>
 
 
+#define Elf_Half Elf64_Half
 #define Elf_Ehdr Elf64_Ehdr
 #define Elf_Phdr Elf64_Phdr
 #define Elf_Shdr Elf64_Shdr
@@ -13,6 +14,7 @@
 
 struct BinaryInfo {
     void* entry;
+    Elf_Half machine;
     Elf_Phdr* phdr;
     size_t phnum;
     size_t phent;

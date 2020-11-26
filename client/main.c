@@ -104,6 +104,16 @@ int main(int argc, char** argv) {
         return retval;
     }
 
+    // Load binary first, because we need to know the architecture.
+    retval = load_elf_binary(argv[0], &info);
+    if (retval != 0) {
+        puts("error: could not load file");
+        return retval;
+    }
+
+    if (info.machine != EM_X86_64)
+        state.config.hhvm = false;
+
     if (server_path == NULL) {
         puts("error: no server specified, use -server=<path>");
         return 1;
@@ -142,12 +152,6 @@ int main(int argc, char** argv) {
     if (retval != 0) {
         puts("error: could not configure tool");
         return 1;
-    }
-
-    retval = load_elf_binary(argv[0], &info);
-    if (retval != 0) {
-        puts("error: could not load file");
-        return retval;
     }
 
     // TODO: don't hardcode stack size
@@ -202,7 +206,12 @@ int main(int argc, char** argv) {
     // TODO: align stack to 16 bytes
 
     *((uint64_t*) state.cpu) = (uint64_t) info.entry;
-    *((uint64_t*) state.cpu + 5) = (uint64_t) stack_top;
+    if (info.machine == EM_X86_64) {
+        *((uint64_t*) state.cpu + 5) = (uint64_t) stack_top;
+    } else {
+        puts("error: unsupported architecture");
+        return -ENOEXEC;
+    }
 
     retval = rtld_init(&state.rtld);
     if (retval < 0) {

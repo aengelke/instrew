@@ -8,9 +8,6 @@
 #include <elf-loader.h>
 
 
-#define elf_check_arch(x) \
-        ((x)->e_machine == EM_X86_64)
-
 #define PAGESIZE ((size_t) 0x1000)
 
 static Elf_Phdr* load_elf_phdrs(Elf_Ehdr* elf_ex, int fd) {
@@ -162,10 +159,10 @@ int load_elf_binary(const char* filename, BinaryInfo* out_info) {
     if (memcmp(&elfhdr_ex, ELFMAG, SELFMAG) != 0)
         goto out_close;
 
-    if (elfhdr_ex.e_type != ET_EXEC && elfhdr_ex.e_type != ET_DYN)
+    if (elfhdr_ex.e_ident[EI_CLASS] != ELFCLASS64)
         goto out_close;
 
-    if (!elf_check_arch(&elfhdr_ex))
+    if (elfhdr_ex.e_type != ET_EXEC && elfhdr_ex.e_type != ET_DYN)
         goto out_close;
 
     Elf_Phdr* elf_phdata = load_elf_phdrs(&elfhdr_ex, fd);
@@ -230,6 +227,7 @@ int load_elf_binary(const char* filename, BinaryInfo* out_info) {
 
     if (out_info != NULL) {
         out_info->entry = (void*) (load_bias + elfhdr_ex.e_entry);
+        out_info->machine = elfhdr_ex.e_machine;
         out_info->phdr = (Elf_Phdr*) (load_addr + elfhdr_ex.e_phoff);
         out_info->phnum = elfhdr_ex.e_phnum;
         out_info->phent = elfhdr_ex.e_phentsize;
