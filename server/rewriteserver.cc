@@ -43,7 +43,7 @@ struct StructOff {
 
 #define RELLUME_PUBLIC_REG(name,nameu,sz,off) \
             inline static constexpr Entry nameu = Entry{ off, sz };
-#include <rellume/cpustruct.inc>
+#include <rellume/cpustruct-x86_64.inc>
 #undef RELLUME_PUBLIC_REG
 };
 
@@ -304,6 +304,7 @@ int main(int argc, char** argv) {
         ll_config_set_call_func(rlcfg, llvm::wrap(call_fn));
     }
     if (server_config.guest_arch == EM_X86_64) {
+        ll_config_set_architecture(rlcfg, "x86-64");
         ll_config_set_use_native_segment_base(rlcfg, server_config.native_segments);
         ll_config_set_hhvm(rlcfg, server_config.hhvm);
 
