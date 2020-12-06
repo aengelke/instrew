@@ -304,6 +304,8 @@ emulate_rv64_syscall(uint64_t* cpu_state) {
     ssize_t res = -ENOSYS;
 
     switch (nr) {
+        struct stat tmp_struct;
+
     native:
         res = syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
         break;
@@ -342,15 +344,14 @@ emulate_rv64_syscall(uint64_t* cpu_state) {
     case 64: nr = __NR_write; goto native;
     case 66: nr = __NR_writev; goto native;
     case 78: nr = __NR_readlinkat; goto native;
-    case 80:
+    case 80: // fstat
+        res = syscall(__NR_fstat, arg0, (uintptr_t) &tmp_struct, 0, 0, 0, 0);
         arg2 = arg1;
-        arg1 = (uint64_t) "";
-        arg3 = 0;
-        /* FALLTHROUGH */
-    case 79:;
-        struct stat tmp_struct;
+        goto fstat_common;
+    case 79:; // fstatat
         uintptr_t tmp_addr = (uintptr_t) &tmp_struct;
         res = syscall(__NR_newfstatat, arg0, arg1, tmp_addr, arg3, 0, 0);
+    fstat_common:
         if (res == 0) {
             struct {
                 unsigned long           st_dev;
