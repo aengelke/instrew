@@ -3,6 +3,7 @@ sources = files(
     'elf-loader.c',
     'emulate.c',
     'main.c',
+    'math.c',
     'memory.c',
     'minilibc.c',
     'rtld.c',
@@ -27,3 +28,5 @@ executable('instrew', sources,
            c_args: ['-D_GNU_SOURCE', '-nostdlib', '-nostartfiles', '-fno-builtin', '-fno-stack-protector', '-fomit-frame-pointer', '-fPIC'],
            link_args: client_link_args,
            install: true)
+
+test('mathlib', executable('test_mathlib', 'math.c', c_args: ['-DTEST']), protocol: 'tap')
