@@ -108,10 +108,9 @@ emulate_syscall(uint64_t* cpu_state) {
     case 63: nr = __NR_uname; goto native;
     case 76: nr = __NR_truncate; goto native;
     case 77: nr = __NR_ftruncate; goto native;
-    case 78: nr = __NR_getdents; goto native;
+    // case 78: nr = __NR_getdents; goto native; // Needs mapping to getdents64
     case 79: nr = __NR_getcwd; goto native;
     case 80: nr = __NR_chdir; goto native;
-    case 84: nr = __NR_rmdir; goto native;
     case 96: nr = __NR_gettimeofday; goto native;
     case 97: nr = __NR_getrlimit; goto native;
     case 99: nr = __NR_sysinfo; goto native;
@@ -155,6 +154,9 @@ emulate_syscall(uint64_t* cpu_state) {
         break;
     case 83: // mkdir
         res = syscall(__NR_mkdirat, AT_FDCWD, arg0, arg1, 0, 0, 0);
+        break;
+    case 84: // rmdir
+        res = syscall(__NR_unlinkat, AT_FDCWD, arg0, AT_REMOVEDIR, 0, 0, 0);
         break;
     case 87: // unlink
         res = syscall(__NR_unlinkat, AT_FDCWD, arg0, 0, 0, 0, 0);
