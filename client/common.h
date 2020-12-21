@@ -65,6 +65,8 @@ int dup2(int oldfd, int newfd);
 int pipe2(int pipefd[2], int flags);
 int __clone(int (*func)(void *), void *stack, int flags, void *arg, ...);
 
+size_t getpagesize(void) __attribute__((const));
+
 #define STRINGIFY_ARG(x) #x
 #define STRINGIFY(x) STRINGIFY_ARG(x)
 #define STRINGIFY_VA_ARG(...) #__VA_ARGS__

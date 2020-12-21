@@ -8,7 +8,6 @@
 #include <memory.h>
 
 
-#define PAGESIZE ((size_t) 0x1000)
 #define ADDRSPACE_DEFAULT_BASE ((void*) 0x0000400000000000ull)
 #define ADDRSPACE_DEFAULT_SIZE 0x40000000
 
@@ -30,7 +29,7 @@ arena_create(void) {
     if (BAD_ADDR(arena))
         return arena;
 
-    int ret = mprotect(arena, ALIGN_UP(sizeof(Arena), PAGESIZE),
+    int ret = mprotect(arena, ALIGN_UP(sizeof(Arena), getpagesize()),
                        PROT_READ|PROT_WRITE);
     if (ret < 0)
         return (Arena*) (uintptr_t) ret;
@@ -38,7 +37,7 @@ arena_create(void) {
     Arena* arena_p = arena;
     arena_p->next = NULL;
     arena_p->size = ADDRSPACE_DEFAULT_SIZE;
-    arena_p->curoff = ALIGN_UP(sizeof(Arena), PAGESIZE);
+    arena_p->curoff = ALIGN_UP(sizeof(Arena), getpagesize());
 
     main_arena = arena;
 
@@ -57,7 +56,7 @@ mem_init(void) {
 
 void*
 mem_alloc(size_t size) {
-    size = ALIGN_UP(size, PAGESIZE);
+    size = ALIGN_UP(size, getpagesize());
 
     Arena* arena = main_arena;
     while (arena != NULL && arena->curoff + size >= arena->size)
@@ -77,7 +76,7 @@ mem_alloc(size_t size) {
 
 int
 mem_free(void* addr, size_t size) {
-    size = ALIGN_UP(size, PAGESIZE);
+    size = ALIGN_UP(size, getpagesize());
     void* ret = mmap(addr, size, PROT_NONE,
                      MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED|MAP_NORESERVE, -1, 0);
     if (BAD_ADDR(ret))

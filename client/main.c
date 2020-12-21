@@ -14,7 +14,6 @@
 #include "instrew-client-config.h"
 
 #define PLATFORM_STRING "x86_64"
-#define PAGESIZE ((size_t) 0x1000)
 
 
 static int open_perfmap(void) {
@@ -191,7 +190,7 @@ int main(int argc, char** argv) {
     *(--stack_top) = getauxval(AT_GID); *(--stack_top) = AT_GID;
     *(--stack_top) = getauxval(AT_EGID); *(--stack_top) = AT_EGID;
     *(--stack_top) = getauxval(AT_CLKTCK); *(--stack_top) = AT_CLKTCK;
-    *(--stack_top) = PAGESIZE; *(--stack_top) = AT_PAGESZ;
+    *(--stack_top) = getauxval(AT_PAGESZ); *(--stack_top) = AT_PAGESZ;
     *(--stack_top) = 0x8001; *(--stack_top) = AT_HWCAP;
     *(--stack_top) = 0; *(--stack_top) = AT_HWCAP2;
     *(--stack_top) = 0; *(--stack_top) = AT_SECURE;

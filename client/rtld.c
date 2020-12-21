@@ -23,8 +23,6 @@
 #define elf_check_arch(x) (0)
 #endif
 
-#define PAGESIZE ((size_t) 0x1000)
-
 #define CHECK_SIGNED_BITS(val,bits) \
             ((val) >= -(1ll << (bits)) && (val) < (1ll << bits)-1)
 

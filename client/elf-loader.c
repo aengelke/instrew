@@ -4,11 +4,10 @@
 #include <linux/fcntl.h>
 #include <linux/fs.h>
 #include <linux/mman.h>
+#include <linux/param.h>
 
 #include <elf-loader.h>
 
-
-#define PAGESIZE ((size_t) 0x1000)
 
 static Elf_Phdr* load_elf_phdrs(Elf_Ehdr* elf_ex, int fd) {
     Elf_Phdr* phdata = NULL;
@@ -57,7 +56,7 @@ static size_t elf_mapping_size(Elf_Phdr* elf_phdata, size_t num_ph) {
             continue;
         if (!has_first) {
             has_first = 1;
-            start = ALIGN_DOWN(elf_phdata[i].p_vaddr, PAGESIZE);
+            start = ALIGN_DOWN(elf_phdata[i].p_vaddr, getpagesize());
         }
         end = elf_phdata[i].p_vaddr + elf_phdata[i].p_memsz;
     }
@@ -77,11 +76,13 @@ elf_map(uintptr_t addr, Elf_Phdr* elf_ppnt, int fd) {
         // Never map code as executable, since the host can't execute it.
     }
 
-    uintptr_t mapstart = ALIGN_DOWN(addr, PAGESIZE);
-    uintptr_t mapend = ALIGN_UP(addr + elf_ppnt->p_filesz, PAGESIZE);
+    size_t pagesz = getpagesize();
+
+    uintptr_t mapstart = ALIGN_DOWN(addr, pagesz);
+    uintptr_t mapend = ALIGN_UP(addr + elf_ppnt->p_filesz, pagesz);
     uintptr_t dataend = addr + elf_ppnt->p_filesz;
     uintptr_t allocend = addr + elf_ppnt->p_memsz;
-    uintptr_t mapoff = ALIGN_DOWN(elf_ppnt->p_offset, PAGESIZE);
+    uintptr_t mapoff = ALIGN_DOWN(elf_ppnt->p_offset, pagesz);
 
     if (mapend > mapstart) {
         void* mapret = mmap((void*) mapstart, mapend - mapstart, prot,
@@ -95,7 +96,7 @@ elf_map(uintptr_t addr, Elf_Phdr* elf_ppnt, int fd) {
 
     if (allocend > dataend)
     {
-        uintptr_t zeropage = ALIGN_UP(dataend, PAGESIZE);
+        uintptr_t zeropage = ALIGN_UP(dataend, pagesz);
         if (allocend < zeropage)
             zeropage = allocend;
 
@@ -106,14 +107,14 @@ elf_map(uintptr_t addr, Elf_Phdr* elf_ppnt, int fd) {
             // temporarily.
             if ((prot & PROT_WRITE) == 0) {
                 puts("zero (page end)");
-                retval = mprotect((void*) ALIGN_DOWN(dataend, PAGESIZE),
-                                  PAGESIZE, prot | PROT_WRITE);
+                retval = mprotect((void*) ALIGN_DOWN(dataend, pagesz),
+                                  pagesz, prot | PROT_WRITE);
                 if (retval < 0)
                     goto out;
             }
             memset((void*) dataend, 0, zeropage - dataend);
             if ((prot & PROT_WRITE) == 0) {
-                mprotect((void*) ALIGN_DOWN(dataend, PAGESIZE), PAGESIZE,
+                mprotect((void*) ALIGN_DOWN(dataend, pagesz), pagesz,
                          prot);
             }
         }
@@ -212,7 +213,7 @@ int load_elf_binary(const char* filename, BinaryInfo* out_info) {
 
             load_bias = (uintptr_t) load_bias_ptr;
             // }
-            load_bias = ALIGN_DOWN(load_bias - elf_ppnt->p_vaddr, PAGESIZE);
+            load_bias = ALIGN_DOWN(load_bias - elf_ppnt->p_vaddr, getpagesize());
         }
 
         if (!load_addr_set) {

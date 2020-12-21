@@ -244,6 +244,7 @@ syscall6(int syscall_number, size_t arg1, size_t arg2, size_t arg3,
 
 char** environ;
 static const size_t* __auxvptr;
+static size_t pagesize;
 
 inline long syscall(long number, long a1, long a2, long a3, long a4, long a5,
                     long a6) {
@@ -597,6 +598,10 @@ unsigned long getauxval(unsigned long type) {
     return 0;
 }
 
+size_t getpagesize(void) {
+    return pagesize;
+}
+
 __attribute__((externally_visible))
 void* memset(void* s, int c, size_t n) {
     unsigned char* sptr = s;
@@ -634,6 +639,8 @@ __start_main(const size_t* initial_stack, const size_t* dynv)
     const size_t* aux = &initial_stack[argc + 2];
     for (; *aux != 0; ++aux) {}
     __auxvptr = (const size_t*) ++aux;
+
+    pagesize = getauxval(AT_PAGESZ);
 
     // Process relocations, if present.
     if (dynv) {
