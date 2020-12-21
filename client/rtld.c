@@ -24,7 +24,7 @@
 #endif
 
 #define CHECK_SIGNED_BITS(val,bits) \
-            ((val) >= -(1ll << (bits)) && (val) < (1ll << bits)-1)
+            ((val) >= -(1ll << (bits-1)) && (val) < (1ll << (bits-1))-1)
 
 #define RTLD_HASH_BITS 17
 #define RTLD_HASH_MASK ((1 << RTLD_HASH_BITS) - 1)
