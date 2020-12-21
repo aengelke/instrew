@@ -50,6 +50,8 @@ static const struct PltEntry plt_entries[] = {
 
 #if defined(__x86_64__)
 #define PLT_FUNC_SIZE 8
+#elif defined(__aarch64__)
+#define PLT_FUNC_SIZE 8
 #else
 #error "currently unsupported architecture"
 #endif
@@ -75,6 +77,10 @@ plt_create(void** out_plt) {
         uint64_t offset = data_ptr - code_ptr - 6;
         // This is: "jmp [rip + offset]; ud2"
         *((uint64_t*) code_ptr) = 0x0b0f0000000025ff | (offset << 16);
+#elif defined(__aarch64__)
+        uint64_t offset = data_ptr - code_ptr;
+        *((uint32_t*) code_ptr+0) = 0x58000011 | (offset << 3); // ldr x17, [pc+off]
+        *((uint32_t*) code_ptr+1) = 0xd61f0220; // br x17
 #else
 #error
 #endif // defined(__x86_64__)
@@ -275,6 +281,7 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
         uint8_t* tgt = tgt_sec_addr + elf_rela->r_offset;
 
         switch (ELF64_R_TYPE(elf_rela->r_info)) {
+#if defined(__x86_64__)
         case R_X86_64_64: {
             uint64_t sym;
             if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
@@ -325,6 +332,7 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
             *((uint64_t*) tgt) = sym + elf_rela->r_addend - (uint64_t) tgt;
             break;
         }
+#elif defined(__aarch64__)
         case R_AARCH64_PREL32: {
             uint64_t sym;
             if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
@@ -337,6 +345,7 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
             *((int32_t*) tgt) = (int32_t) (off);
             break;
         }
+        case R_AARCH64_JUMP26:
         case R_AARCH64_CALL26: {
             uint64_t sym;
             if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
@@ -360,6 +369,27 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
             }
             uint32_t insn = (*(uint32_t*) tgt) & 0xfc000000;
             *((uint32_t*) tgt) = insn | ((off >> 2) & 0x3ffffff);
+            break;
+        }
+        case R_AARCH64_ADR_PREL_PG_HI21: {
+            uint64_t sym;
+            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+                return -EINVAL;
+            sym = (sym + elf_rela->r_addend) & ~0xffful;
+            ptrdiff_t off = sym - ((uint64_t) tgt & ~0xffful);
+            if (!CHECK_SIGNED_BITS(off >> 12, 20)) {
+                dprintf(2, "relocation offset too large (prel_pg_hi21): %lx\n", off);
+                return -EINVAL;
+            }
+            *((int32_t*) tgt) |= (int32_t) (((off >> 12) & 0xfffff) << 5);
+            break;
+        }
+        case R_AARCH64_ADD_ABS_LO12_NC: {
+            uint64_t sym;
+            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+                return -EINVAL;
+            sym += elf_rela->r_addend;
+            *((int32_t*) tgt) |= (int32_t) ((sym & 0xfff) << 10);
             break;
         }
         case R_AARCH64_MOVW_UABS_G0_NC: {
@@ -394,6 +424,7 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
             *((int32_t*) tgt) |= (int32_t) (((sym >> 48) & 0xffff) << 5);
             break;
         }
+#endif
         default:
             dprintf(2, "unhandled relocation %u\n", ELF64_R_TYPE(elf_rela->r_info));
             return -EINVAL;
