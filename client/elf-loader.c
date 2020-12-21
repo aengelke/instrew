@@ -84,6 +84,12 @@ elf_map(uintptr_t addr, Elf_Phdr* elf_ppnt, int fd) {
     uintptr_t allocend = addr + elf_ppnt->p_memsz;
     uintptr_t mapoff = ALIGN_DOWN(elf_ppnt->p_offset, pagesz);
 
+    if ((elf_ppnt->p_vaddr & (pagesz - 1)) != (elf_ppnt->p_offset & (pagesz - 1))) {
+        printf("mapoff (%lx %lx pgsz=%lx)\n", elf_ppnt->p_vaddr,
+               elf_ppnt->p_offset, pagesz);
+        return -ENOEXEC;
+    }
+
     if (mapend > mapstart) {
         void* mapret = mmap((void*) mapstart, mapend - mapstart, prot,
                             MAP_PRIVATE|MAP_FIXED, fd, mapoff);
