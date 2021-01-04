@@ -37,19 +37,25 @@ int main(int argc, char** argv) {
     struct State state = {0};
     state.cpu = cpu_state_buffer + 0x40;
     state.config.perfmap_fd = -1;
-    state.config.opt_level = 1;
-    state.config.opt_full_facets = true;
-    state.config.opt_unsafe_callret = true;
-    state.config.opt_callret_lifting = true;
-#ifdef __x86_64__
-    state.config.hhvm = true;
-#endif
+
 
     STATE_FROM_CPU_STATE(state.cpu) = &state;
 
     const char* server_path = INSTREW_DEFAULT_SERVER;
     const char* tool_path = "none";
     const char* tool_config = "";
+    int sc_opt_level = 1;
+    bool sc_profile_rewriting = false;
+    bool sc_profile_llvm_passes = false;
+    bool sc_opt_full_facets = true;
+    bool sc_opt_unsafe_callret = true;
+    bool sc_opt_callret_lifting = true;
+    bool sc_verbose = false;
+    bool sc_d_dump_objects = false;
+    bool sc_hhvm = false;
+#ifdef __x86_64__
+    sc_hhvm = true;
+#endif
 
     while (argc > 1) {
         --argc;
@@ -61,23 +67,24 @@ int main(int argc, char** argv) {
         } else if (strcmp(arg, "-regs") == 0) {
             state.config.print_regs = true;
         } else if (strcmp(arg, "-profile") == 0) {
+            sc_profile_rewriting = true;
             state.config.profile_rewriting = true;
         } else if (strcmp(arg, "-opt") == 0) {
-            state.config.opt_level = 2;
+            sc_opt_level = 2;
         } else if (strcmp(arg, "-nofacets") == 0) {
-            state.config.opt_full_facets = false;
+            sc_opt_full_facets = false;
         } else if (strcmp(arg, "-safe") == 0) {
-            state.config.opt_unsafe_callret = false;
+            sc_opt_unsafe_callret = false;
         } else if (strcmp(arg, "-time-passes") == 0) {
-            state.config.profile_llvm_passes = true;
+            sc_profile_llvm_passes = true;
         } else if (strcmp(arg, "-v") == 0) {
-            state.config.verbose = true;
+            sc_verbose = true;
         } else if (strcmp(arg, "-ddump-objects") == 0) {
-            state.config.d_dump_objects = true;
+            sc_d_dump_objects = true;
         } else if (strcmp(arg, "-nohhvm") == 0) {
-            state.config.hhvm = false;
+            sc_hhvm = false;
         } else if (strcmp(arg, "-nocallret") == 0) {
-            state.config.opt_callret_lifting = false;
+            sc_opt_callret_lifting = false;
         } else if (strncmp(arg, "-server=", 8) == 0) {
             server_path = arg + 8;
         } else if (strncmp(arg, "-tool=", 6) == 0) {
@@ -110,15 +117,12 @@ int main(int argc, char** argv) {
         return retval;
     }
 
-    if (info.machine != EM_X86_64)
-        state.config.hhvm = false;
-
     if (server_path == NULL) {
         puts("error: no server specified, use -server=<path>");
         return 1;
     }
 
-    if (state.config.verbose)
+    if (sc_verbose)
         printf("note: using server %s\n", server_path);
 
     retval = translator_init(&state.translator, server_path);
@@ -128,27 +132,26 @@ int main(int argc, char** argv) {
     }
 
     retval = translator_config_begin(&state.translator);
-    retval = translator_config_tool(&state.translator, tool_path);
-    retval = translator_config_tool_config(&state.translator, tool_config);
-    retval = translator_config_opt_pass_pipeline(&state.translator, state.config.opt_level);
-    retval = translator_config_opt_code_gen(&state.translator, 3);
-    retval = translator_config_opt_full_facets(&state.translator, state.config.opt_full_facets);
-    retval = translator_config_opt_unsafe_callret(&state.translator, state.config.opt_unsafe_callret);
-    retval = translator_config_opt_callret_lifting(&state.translator, state.config.opt_callret_lifting);
-    retval = translator_config_debug_profile_server(&state.translator, state.config.profile_rewriting);
-    retval = translator_config_debug_dump_ir(&state.translator, state.config.verbose);
-    retval = translator_config_debug_dump_objects(&state.translator, state.config.d_dump_objects);
-    retval = translator_config_debug_time_passes(&state.translator, state.config.profile_llvm_passes);
-    retval = translator_config_guest_arch(&state.translator, info.machine);
+    retval |= translator_config_tool(&state.translator, tool_path);
+    retval |= translator_config_tool_config(&state.translator, tool_config);
+    retval |= translator_config_opt_pass_pipeline(&state.translator, sc_opt_level);
+    retval |= translator_config_opt_code_gen(&state.translator, 3);
+    retval |= translator_config_opt_full_facets(&state.translator, sc_opt_full_facets);
+    retval |= translator_config_opt_unsafe_callret(&state.translator, sc_opt_unsafe_callret);
+    retval |= translator_config_opt_callret_lifting(&state.translator, sc_opt_callret_lifting);
+    retval |= translator_config_debug_profile_server(&state.translator, sc_profile_rewriting);
+    retval |= translator_config_debug_dump_ir(&state.translator, sc_verbose);
+    retval |= translator_config_debug_dump_objects(&state.translator, sc_d_dump_objects);
+    retval |= translator_config_debug_time_passes(&state.translator, sc_profile_llvm_passes);
+    retval |= translator_config_guest_arch(&state.translator, info.machine);
 #ifdef __x86_64__
     retval |= translator_config_triple(&state.translator, "x86_64-unknown-linux-gnu");
     retval |= translator_config_cpu(&state.translator, "x86-64");
     retval |= translator_config_cpu_features(&state.translator, "+nopl");
     retval |= translator_config_native_segments(&state.translator, true);
-    retval |= translator_config_hhvm(&state.translator, state.config.hhvm);
-    state.config.native_segment_regs = true; // TODO: fetch from S_INIT
+    retval |= translator_config_hhvm(&state.translator, sc_hhvm);
 #endif
-    retval = translator_config_end(&state.translator);
+    retval |= translator_config_end(&state.translator);
     if (retval != 0) {
         puts("error: could not configure tool");
         return 1;
