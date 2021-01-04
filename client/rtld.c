@@ -252,6 +252,15 @@ rtld_elf_add_stub(uintptr_t sym, uintptr_t* out_stub) {
 #endif
 }
 
+static bool
+rtld_elf_signed_range(int64_t val, unsigned bits, const char* relinfo) {
+    if (!CHECK_SIGNED_BITS(val, bits)) {
+        dprintf(2, "relocation offset out of range (%s): %lx\n", relinfo, val);
+        return false;
+    }
+    return true;
+}
+
 static int
 rtld_elf_process_rela(RtldElf* re, int rela_idx) {
     if (rela_idx == 0 || rela_idx >= re->re_ehdr->e_shnum)
@@ -280,150 +289,82 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
         unsigned sym_idx = ELF64_R_SYM(elf_rela->r_info);
         uint8_t* tgt = tgt_sec_addr + elf_rela->r_offset;
 
+        uint64_t sym;
+        if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+            return -EINVAL;
+        uint64_t syma = sym + elf_rela->r_addend;
+        int64_t prel_syma = syma - (int64_t) tgt;
+
         switch (ELF64_R_TYPE(elf_rela->r_info)) {
 #if defined(__x86_64__)
-        case R_X86_64_64: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
-                return -EINVAL;
-            *((uint64_t*) tgt) = sym + elf_rela->r_addend;
+        case R_X86_64_64:
+            *((uint64_t*) tgt) = syma;
             break;
-        }
-        case R_X86_64_PC32: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+        case R_X86_64_PC32:
+            if (!rtld_elf_signed_range(prel_syma, 32, "R_X86_64_PC32"))
                 return -EINVAL;
-            int64_t off = sym + elf_rela->r_addend - (uint64_t) tgt;
-            if (!CHECK_SIGNED_BITS(off, 32)) {
-                dprintf(2, "relocation offset too large (pc32): %lx\n", off);
-                return -EINVAL;
-            }
-            *((int32_t*) tgt) = off;
+            *((int32_t*) tgt) = prel_syma;
             break;
-        }
-        case R_X86_64_PLT32: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+        case R_X86_64_PLT32:
+            if (!rtld_elf_signed_range(prel_syma, 32, "R_X86_64_PLT32"))
                 return -EINVAL;
-            int64_t off = sym + elf_rela->r_addend - (uint64_t) tgt;
-            if (!CHECK_SIGNED_BITS(off, 32)) {
-                dprintf(2, "relocation offset too large (plt32): %lx\n", off);
-                return -EINVAL;
-            }
-            *((int32_t*) tgt) = off;
+            *((int32_t*) tgt) = prel_syma;
             break;
-        }
-        case R_X86_64_32S: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+        case R_X86_64_32S:
+            if (!rtld_elf_signed_range(prel_syma, 32, "R_X86_64_32S"))
                 return -EINVAL;
-            int64_t val = sym + elf_rela->r_addend;
-            if (!CHECK_SIGNED_BITS(val, 32)) {
-                dprintf(2, "relocation offset too large (32s): %lx\n", val);
-                return -EINVAL;
-            }
-            *((int32_t*) tgt) = val;
+            *((int32_t*) tgt) = syma;
             break;
-        }
-        case R_X86_64_PC64: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
-                return -EINVAL;
-            *((uint64_t*) tgt) = sym + elf_rela->r_addend - (uint64_t) tgt;
+        case R_X86_64_PC64:
+            *((uint64_t*) tgt) = prel_syma;
             break;
-        }
 #elif defined(__aarch64__)
-        case R_AARCH64_PREL32: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+        case R_AARCH64_PREL32:
+            if (!rtld_elf_signed_range(prel_syma, 32, "R_AARCH64_PREL32"))
                 return -EINVAL;
-            ptrdiff_t off = sym + elf_rela->r_addend - (uint64_t) tgt;
-            if (!CHECK_SIGNED_BITS(off >> 2, 32)) {
-                dprintf(2, "relocation offset too large (prel32): %lx\n", off);
-                return -EINVAL;
-            }
-            *((int32_t*) tgt) = (int32_t) (off);
+            *((int32_t*) tgt) = prel_syma;
             break;
-        }
         case R_AARCH64_JUMP26:
-        case R_AARCH64_CALL26: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
-                return -EINVAL;
-            ptrdiff_t off = sym + elf_rela->r_addend - (uint64_t) tgt;
-            if (off & 3) {
-                dprintf(2, "relocation offset misaligned (call26): %lx\n", off);
-                return -EINVAL;
-            }
-            if (!CHECK_SIGNED_BITS(off >> 2, 26)) {
+        case R_AARCH64_CALL26:
+            if (!CHECK_SIGNED_BITS(prel_syma, 28)) {
                 // Ok, let's create a stub.
+                // TODO: make stubs more compact/efficient
                 uintptr_t stub = 0;
-                int ret = rtld_elf_add_stub(sym + elf_rela->r_addend, &stub);
+                int ret = rtld_elf_add_stub(syma, &stub);
                 if (ret < 0)
                     return ret;
-                off = stub - (uintptr_t) tgt;
-                if (!CHECK_SIGNED_BITS(off >> 2, 26)) {
-                    dprintf(2, "relocation offset too large (call26,stub): %lx\n", off);
-                    return -EINVAL;
-                }
+                prel_syma = stub - (uintptr_t) tgt;
             }
-            uint32_t insn = (*(uint32_t*) tgt) & 0xfc000000;
-            *((uint32_t*) tgt) = insn | ((off >> 2) & 0x3ffffff);
-            break;
-        }
-        case R_AARCH64_ADR_PREL_PG_HI21: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+            if (!rtld_elf_signed_range(prel_syma, 28, "R_AARCH64_JUMP26"))
                 return -EINVAL;
-            sym = (sym + elf_rela->r_addend) & ~0xffful;
-            ptrdiff_t off = sym - ((uint64_t) tgt & ~0xffful);
-            if (!CHECK_SIGNED_BITS(off >> 12, 20)) {
-                dprintf(2, "relocation offset too large (prel_pg_hi21): %lx\n", off);
-                return -EINVAL;
-            }
-            *((int32_t*) tgt) |= (int32_t) (((off >> 12) & 0xfffff) << 5);
+            *((uint32_t*) tgt) |= (prel_syma >> 2) & 0x3ffffff;
             break;
-        }
-        case R_AARCH64_ADD_ABS_LO12_NC: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
+        case R_AARCH64_ADR_PREL_PG_HI21:
+            prel_syma = ALIGN_DOWN(syma, 1<<12) - ALIGN_DOWN((int64_t) tgt, 1<<12);
+            prel_syma >>= 12;
+            if (!rtld_elf_signed_range(prel_syma, 21, "R_AARCH64_PG_HI21"))
                 return -EINVAL;
-            sym += elf_rela->r_addend;
-            *((int32_t*) tgt) |= (int32_t) ((sym & 0xfff) << 10);
+            *((int32_t*) tgt) |= ((prel_syma & 3) << 29) |
+                                 (((prel_syma >> 2) & 0x7ffff) << 5);
             break;
-        }
-        case R_AARCH64_MOVW_UABS_G0_NC: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
-                return -EINVAL;
-            sym += elf_rela->r_addend;
-            *((int32_t*) tgt) |= (int32_t) ((sym & 0xffff) << 5);
+        case R_AARCH64_ADD_ABS_LO12_NC:
+            *((int32_t*) tgt) |= (syma & 0xfff) << 10;
             break;
-        }
-        case R_AARCH64_MOVW_UABS_G1_NC: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
-                return -EINVAL;
-            sym += elf_rela->r_addend;
-            *((int32_t*) tgt) |= (int32_t) (((sym >> 16) & 0xffff) << 5);
+        case R_AARCH64_LDST64_ABS_LO12_NC:
+            *((int32_t*) tgt) |= (syma & 0xfff) >> 3 << 10;
             break;
-        }
-        case R_AARCH64_MOVW_UABS_G2_NC: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
-                return -EINVAL;
-            sym += elf_rela->r_addend;
-            *((int32_t*) tgt) |= (int32_t) (((sym >> 32) & 0xffff) << 5);
+        case R_AARCH64_MOVW_UABS_G0_NC:
+            *((int32_t*) tgt) |= (syma & 0xffff) << 5;
             break;
-        }
-        case R_AARCH64_MOVW_UABS_G3: {
-            uint64_t sym;
-            if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
-                return -EINVAL;
-            sym += elf_rela->r_addend;
-            *((int32_t*) tgt) |= (int32_t) (((sym >> 48) & 0xffff) << 5);
+        case R_AARCH64_MOVW_UABS_G1_NC:
+            *((int32_t*) tgt) |= ((syma >> 16) & 0xffff) << 5;
             break;
-        }
+        case R_AARCH64_MOVW_UABS_G2_NC:
+            *((int32_t*) tgt) |= ((syma >> 32) & 0xffff) << 5;
+            break;
+        case R_AARCH64_MOVW_UABS_G3:
+            *((int32_t*) tgt) |= ((syma >> 48) & 0xffff) << 5;
+            break;
 #endif
         default:
             dprintf(2, "unhandled relocation %u\n", ELF64_R_TYPE(elf_rela->r_info));
