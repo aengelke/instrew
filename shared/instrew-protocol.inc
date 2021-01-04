@@ -32,9 +32,7 @@ INSTREW_SERVER_CONF_BOOL(16, opt_callret_lifting, true)
 INSTREW_SERVER_CONF_BOOL(17, opt_full_facets, true)
 INSTREW_SERVER_CONF_INT32(18, guest_arch, 62) // EM_X86_64
 #elif defined(INSTREW_CLIENT_CONF)
-// INSTREW_CLIENT_CONF_*(id, name)
-// The default value is zero-initialized, however, the server should always
-// provide all supported options to avoid ambiguity.
-//INSTREW_CLIENT_CONF_BOOL(1, hhvm)
-//INSTREW_CLIENT_CONF_BOOL(2, native_seg_regs)
+// INSTREW_CLIENT_CONF_*(id, name); defaults to zero.
+INSTREW_CLIENT_CONF_INT32(1, callconv)
+INSTREW_CLIENT_CONF_INT32(2, native_seg_regs)
 #endif

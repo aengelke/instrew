@@ -232,16 +232,16 @@ void dispatch_loop(struct State* state) {
     uint64_t quick_tlb[1 << QUICK_TLB_BITS][2] = {0};
     QTLB_FROM_CPU_STATE(state->cpu) = quick_tlb;
 
-    if (state->config.hhvm) {
-#if defined(__x86_64__)
-        dispatch_hhvm(state->cpu);
-#else // !defined(__x86_64__)
-        puts("error: hhvm_dispatch only supported on x86-64");
-        _exit(-EOPNOTSUPP);
-#endif // defined(__x86_64__)
-    } else {
-        while (true) {
+    switch (state->tc.tc_callconv) {
+    case 0:
+        while (true)
             dispatch_cdecl(state->cpu);
-        }
+#if defined(__x86_64__)
+    case 1:
+        dispatch_hhvm(state->cpu);
+#endif // defined(__x86_64__)
+    default:
+        puts("error: unsupported calling convention");
+        _exit(-EOPNOTSUPP);
     }
 }

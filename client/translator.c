@@ -189,6 +189,18 @@ static int translator_config_write_str(Translator* t, uint8_t id, const char* va
 #undef INSTREW_SERVER_CONF_INT32
 #undef INSTREW_SERVER_CONF_STR
 
+int translator_config_fetch(Translator* t, struct TranslatorConfig* cfg) {
+    int32_t sz = translator_hdr_recv(t, MSGID_S_INIT);
+    if (sz < 0)
+        return sz;
+    if (sz != sizeof *cfg)
+        return -EPROTO;
+    ssize_t ret = read_full(t->rd_fd, cfg, sz);
+    if (ret != (ssize_t) sz)
+        return ret;
+    return 0;
+}
+
 int translator_get_object(Translator* t, void** out_obj, size_t* out_obj_size) {
     int32_t sz = translator_hdr_recv(t, MSGID_S_OBJECT);
     if (sz < 0)

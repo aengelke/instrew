@@ -154,6 +154,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    retval = translator_config_fetch(&state.translator, &state.tc);
+    if (retval != 0) {
+        puts("error: could not fetch client configuration");
+        return 1;
+    }
+
     // TODO: don't hardcode stack size
     // TODO: support execstack
 #define STACK_SIZE 0x1000000

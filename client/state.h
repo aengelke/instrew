@@ -33,6 +33,8 @@ struct State {
         bool d_dump_objects;
         bool hhvm;
     } config;
+
+    struct TranslatorConfig tc;
 };
 
 #define STATE_FROM_CPU_STATE(cpu_state) (*((struct State**) (cpu_state) - 1))

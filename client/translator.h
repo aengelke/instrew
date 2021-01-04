@@ -41,4 +41,15 @@ int translator_config_end(Translator* t);
 #undef INSTREW_SERVER_CONF_INT32
 #undef INSTREW_SERVER_CONF_STR
 
+struct TranslatorConfig {
+#define INSTREW_CLIENT_CONF
+#define INSTREW_CLIENT_CONF_INT32(id, name) \
+        int32_t tc_ ## name;
+#include "instrew-protocol.inc"
+#undef INSTREW_CLIENT_CONF
+#undef INSTREW_CLIENT_CONF_INT32
+} __attribute__((packed));
+
+int translator_config_fetch(Translator* t, struct TranslatorConfig* cfg);
+
 #endif

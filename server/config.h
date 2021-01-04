@@ -25,4 +25,14 @@ struct ServerConfig {
     void ReadFromConn(Conn& conn);
 };
 
+struct ClientConfig {
+#define INSTREW_CLIENT_CONF
+#define INSTREW_CLIENT_CONF_INT32(id, name) \
+    int32_t tc_ ## name = 0;
+#include "instrew-protocol.inc"
+#undef INSTREW_CLIENT_CONF
+#undef INSTREW_CLIENT_CONF_INT32
+} __attribute__((packed));
+
+
 #endif

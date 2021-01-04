@@ -254,6 +254,7 @@ int main(int argc, char** argv) {
 
     Conn conn; // uses stdio
 
+    ClientConfig client_config;
     ServerConfig server_config;
     if (conn.RecvMsg() != Msg::C_INIT) {
         std::cerr << "error: expected C_INIT message" << std::endl;
@@ -307,6 +308,8 @@ int main(int argc, char** argv) {
         ll_config_set_architecture(rlcfg, "x86-64");
         ll_config_set_use_native_segment_base(rlcfg, server_config.native_segments);
         ll_config_set_hhvm(rlcfg, server_config.hhvm);
+        client_config.tc_callconv = server_config.hhvm ? 1 : 0;
+        client_config.tc_native_seg_regs = server_config.native_segments;
 
         auto syscall_fn = CreateFunc(ctx, "syscall");
         helper_fns.push_back(syscall_fn);
@@ -362,6 +365,11 @@ int main(int argc, char** argv) {
             // Remove useless marker function if tool doesn't require it.
             marker_fn->eraseFromParent();
         }
+
+        // Send client configuration here. It must be sent before the first
+        // object, but only after the tool has been initialized as it might
+        // still want to change some options.
+        conn.SendMsg(Msg::S_INIT, &client_config, sizeof(client_config));
 
         // Rename all tool-defined functions appropriately.
         uint64_t zval_cnt = 1ull << 63;
