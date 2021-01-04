@@ -1,4 +1,5 @@
 
+#include "callconv.h"
 #include "codegenerator.h"
 #include "config.h"
 #include "connection.h"
@@ -222,6 +223,9 @@ int main(int argc, char** argv) {
 
     Conn conn; // uses stdio
 
+    // TODO: integrate into server_config.
+    CallConv instrew_cc = CallConv::CDECL;
+
     ClientConfig client_config;
     ServerConfig server_config;
     if (conn.RecvMsg() != Msg::C_INIT) {
@@ -275,7 +279,12 @@ int main(int argc, char** argv) {
     if (server_config.guest_arch == EM_X86_64) {
         ll_config_set_architecture(rlcfg, "x86-64");
         ll_config_set_use_native_segment_base(rlcfg, server_config.native_segments);
-        ll_config_set_hhvm(rlcfg, server_config.hhvm);
+        // instrew_cc defaults to CDECL, where functions are not modified. We
+        // currently use this to let Rellume generate HHVMCC functions.
+        if (!server_config.opt_new_callconv)
+            ll_config_set_hhvm(rlcfg, server_config.hhvm);
+        else
+            instrew_cc = CallConv::HHVM;
         client_config.tc_callconv = server_config.hhvm ? 1 : 0;
         client_config.tc_native_seg_regs = server_config.native_segments;
 
@@ -449,6 +458,8 @@ int main(int argc, char** argv) {
             // or be passed to code generation, causing compilation failure.
             for (auto* lift_fn : lift_fns)
                 lift_fn->removeFromParent();
+
+            fn = ChangeCallConv(fn, instrew_cc);
 
             if (server_config.debug_profile_server)
                 dur_instrument += std::chrono::steady_clock::now() - time_instrument_start;

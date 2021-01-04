@@ -53,6 +53,7 @@ int main(int argc, char** argv) {
     bool sc_verbose = false;
     bool sc_d_dump_objects = false;
     bool sc_hhvm = false;
+    bool sc_new_callconv = false;
 #ifdef __x86_64__
     sc_hhvm = true;
 #endif
@@ -83,6 +84,8 @@ int main(int argc, char** argv) {
             sc_d_dump_objects = true;
         } else if (strcmp(arg, "-nohhvm") == 0) {
             sc_hhvm = false;
+        } else if (strcmp(arg, "-newcc") == 0) {
+            sc_new_callconv = true;
         } else if (strcmp(arg, "-nocallret") == 0) {
             sc_opt_callret_lifting = false;
         } else if (strncmp(arg, "-server=", 8) == 0) {
@@ -139,6 +142,7 @@ int main(int argc, char** argv) {
     retval |= translator_config_opt_full_facets(&state.translator, sc_opt_full_facets);
     retval |= translator_config_opt_unsafe_callret(&state.translator, sc_opt_unsafe_callret);
     retval |= translator_config_opt_callret_lifting(&state.translator, sc_opt_callret_lifting);
+    retval |= translator_config_opt_new_callconv(&state.translator, sc_new_callconv);
     retval |= translator_config_debug_profile_server(&state.translator, sc_profile_rewriting);
     retval |= translator_config_debug_dump_ir(&state.translator, sc_verbose);
     retval |= translator_config_debug_dump_objects(&state.translator, sc_d_dump_objects);

@@ -31,6 +31,7 @@ INSTREW_SERVER_CONF_STR(15, tool_config, "")
 INSTREW_SERVER_CONF_BOOL(16, opt_callret_lifting, true)
 INSTREW_SERVER_CONF_BOOL(17, opt_full_facets, true)
 INSTREW_SERVER_CONF_INT32(18, guest_arch, 62) // EM_X86_64
+INSTREW_SERVER_CONF_BOOL(19, opt_new_callconv, false)
 #elif defined(INSTREW_CLIENT_CONF)
 // INSTREW_CLIENT_CONF_*(id, name); defaults to zero.
 INSTREW_CLIENT_CONF_INT32(1, callconv)
