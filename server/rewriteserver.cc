@@ -31,22 +31,6 @@
 
 #define SPTR_ADDR_SPACE 1
 
-struct StructOff {
-    struct Entry {
-        unsigned off;
-        unsigned size;
-        llvm::Value* PtrTo(llvm::IRBuilder<>& irb, llvm::Value* base) const {
-            llvm::Type* ty = irb.getIntNTy(8*size)->getPointerTo(SPTR_ADDR_SPACE);
-            return irb.CreatePointerCast(irb.CreateConstGEP1_64(base, off), ty);
-        }
-    };
-
-#define RELLUME_PUBLIC_REG(name,nameu,sz,off) \
-            inline static constexpr Entry nameu = Entry{ off, sz };
-#include <rellume/cpustruct-x86_64.inc>
-#undef RELLUME_PUBLIC_REG
-};
-
 static llvm::Function* CreateFunc(llvm::LLVMContext& ctx,
                                   const std::string name, bool hhvm = false,
                                   bool external = true) {
@@ -94,14 +78,6 @@ static llvm::Function* CreateFuncImpl(llvm::LLVMContext& ctx,
 
 static llvm::Function* CreateNoopFn(llvm::LLVMContext& ctx) {
     return CreateFuncImpl(ctx, "noop_stub", [](llvm::IRBuilder<>& irb, llvm::Value* arg) {
-        irb.CreateRetVoid();
-    });
-}
-
-static llvm::Function* CreateRdtscFn(llvm::LLVMContext& ctx) {
-    return CreateFuncImpl(ctx, "rdtsc", [](llvm::IRBuilder<>& irb, llvm::Value* arg) {
-        irb.CreateStore(irb.getInt64(0), StructOff::RAX.PtrTo(irb, arg));
-        irb.CreateStore(irb.getInt64(0), StructOff::RDX.PtrTo(irb, arg));
         irb.CreateRetVoid();
     });
 }
@@ -317,12 +293,9 @@ int main(int argc, char** argv) {
 
         auto noop_fn = CreateNoopFn(ctx);
         lift_fns.push_back(noop_fn);
-        auto rdtsc_fn = CreateRdtscFn(ctx);
-        lift_fns.push_back(rdtsc_fn);
         auto cpuid_fn = CreateFunc(ctx, "cpuid");
         helper_fns.push_back(cpuid_fn);
         ll_config_set_instr_impl(rlcfg, FDI_CPUID, llvm::wrap(cpuid_fn));
-        ll_config_set_instr_impl(rlcfg, FDI_RDTSC, llvm::wrap(rdtsc_fn));
         ll_config_set_instr_impl(rlcfg, FDI_FLDCW, llvm::wrap(noop_fn));
         ll_config_set_instr_impl(rlcfg, FDI_LDMXCSR, llvm::wrap(noop_fn));
     } else if (server_config.guest_arch == EM_RISCV) {
