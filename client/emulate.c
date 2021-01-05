@@ -124,9 +124,6 @@ emulate_syscall(uint64_t* cpu_state) {
     case 191: nr = __NR_getxattr; goto native;
     case 192: nr = __NR_lgetxattr; goto native;
     case 193: nr = __NR_fgetxattr; goto native;
-#ifdef __x86_64__
-    case 201: nr = __NR_time; goto native;
-#endif
     case 202: nr = __NR_futex; goto native;
     case 217: nr = __NR_getdents64; goto native;
     case 218: nr = __NR_set_tid_address; goto native;
@@ -265,6 +262,15 @@ emulate_syscall(uint64_t* cpu_state) {
             break;
         }
         break;
+
+    case 201: { // time
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME_COARSE, &ts);
+        if (arg0)
+            *(long*) arg0 = ts.tv_sec;
+        res = ts.tv_sec;
+        break;
+    }
 
     case 231: {
         if (UNLIKELY(state->config.profile_rewriting)) {
