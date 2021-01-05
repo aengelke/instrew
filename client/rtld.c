@@ -346,8 +346,20 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
         case R_AARCH64_ADD_ABS_LO12_NC:
             *((int32_t*) tgt) |= (syma & 0xfff) << 10;
             break;
+        case R_AARCH64_LDST8_ABS_LO12_NC:
+            *((int32_t*) tgt) |= (syma & 0xfff) << 10;
+            break;
+        case R_AARCH64_LDST16_ABS_LO12_NC:
+            *((int32_t*) tgt) |= (syma & 0xfff) >> 1 << 10;
+            break;
+        case R_AARCH64_LDST32_ABS_LO12_NC:
+            *((int32_t*) tgt) |= (syma & 0xfff) >> 2 << 10;
+            break;
         case R_AARCH64_LDST64_ABS_LO12_NC:
             *((int32_t*) tgt) |= (syma & 0xfff) >> 3 << 10;
+            break;
+        case R_AARCH64_LDST128_ABS_LO12_NC:
+            *((int32_t*) tgt) |= (syma & 0xfff) >> 4 << 10;
             break;
         case R_AARCH64_MOVW_UABS_G0_NC:
             *((int32_t*) tgt) |= (syma & 0xffff) << 5;
