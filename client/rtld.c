@@ -64,21 +64,18 @@ plt_create(void** out_plt) {
     size_t data_size = plt_entry_count * sizeof(uintptr_t);
     size_t plt_size = data_offset + data_size;
 
-    uint8_t* plt = mem_alloc(plt_size);
-    if (BAD_ADDR(plt))
-        return (int) (uintptr_t) plt;
+    uintptr_t plt[ALIGN_UP(plt_size, sizeof(uintptr_t)) / sizeof(uintptr_t)];
 
     for (size_t i = 0; i < plt_entry_count; i++) {
-        uint8_t* code_ptr = plt + i * PLT_FUNC_SIZE;
-        uint8_t* data_ptr = plt + data_offset + i * sizeof(uintptr_t);
+        void* code_ptr = (uint8_t*) plt + i * PLT_FUNC_SIZE;
+        uintptr_t* data_ptr = &plt[data_offset / sizeof(uintptr_t) + i];
+        ptrdiff_t offset = (char*) data_ptr - (char*) code_ptr;
 
-        *((uintptr_t*) data_ptr) = plt_entries[i].func;
+        *data_ptr = plt_entries[i].func;
 #if defined(__x86_64__)
-        uint64_t offset = data_ptr - code_ptr - 6;
         // This is: "jmp [rip + offset]; ud2"
-        *((uint64_t*) code_ptr) = 0x0b0f0000000025ff | (offset << 16);
+        *((uint64_t*) code_ptr) = 0x0b0f0000000025ff | ((offset - 6) << 16);
 #elif defined(__aarch64__)
-        uint64_t offset = data_ptr - code_ptr;
         *((uint32_t*) code_ptr+0) = 0x58000011 | (offset << 3); // ldr x17, [pc+off]
         *((uint32_t*) code_ptr+1) = 0xd61f0220; // br x17
 #else
@@ -86,11 +83,14 @@ plt_create(void** out_plt) {
 #endif // defined(__x86_64__)
     }
 
-    int retval = mprotect(plt, plt_size, PROT_READ|PROT_EXEC);
-    if (retval < 0)
-        return retval;
+    void* pltcode = mem_alloc_code(sizeof(plt), 0x40);
+    if (BAD_ADDR(pltcode))
+        return (int) (uintptr_t) pltcode;
+    int ret = mem_write_code(pltcode, plt, sizeof(plt));
+    if (ret < 0)
+        return ret;
+    *out_plt = pltcode;
 
-    *out_plt = plt;
     return 0;
 }
 
@@ -218,7 +218,7 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* 
         *out_addr = sym->st_value;
     } else if (sym->st_shndx < re->re_ehdr->e_shnum) {
         Elf64_Shdr* tgt_shdr = re->re_shdr + sym->st_shndx;
-        *out_addr = (uintptr_t) re->base + tgt_shdr->sh_offset + sym->st_value;
+        *out_addr = tgt_shdr->sh_addr + sym->st_value;
     } else {
         return -EINVAL;
     }
@@ -229,19 +229,20 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* 
 #if defined(__aarch64__)
 static int
 rtld_elf_add_stub(uintptr_t sym, uintptr_t* out_stub) {
-    uint32_t* stub = mem_alloc(5 * sizeof(uint32_t));
+    uint32_t stcode[] = {
+        0xd2800010 | (((sym >> 0) & 0xffff) << 5), // movz x16, ...
+        0xf2a00010 | (((sym >> 16) & 0xffff) << 5), // movk x16, ..., lsl 16
+        0xf2c00010 | (((sym >> 32) & 0xffff) << 5), // movk x16, ..., lsl 32
+        0xf2e00010 | (((sym >> 48) & 0xffff) << 5), // movk x16, ..., lsl 48
+        0xd61f0200, // br x16
+    };
+
+    void* stub = mem_alloc_code(sizeof(stcode), 0x40);
     if (BAD_ADDR(stub))
         return (int) (uintptr_t) stub;
-
-    stub[0] = 0xd2800010 | (((sym >> 0) & 0xffff) << 5); // movz x16, ...
-    stub[1] = 0xf2a00010 | (((sym >> 16) & 0xffff) << 5); // movk x16, ..., lsl 16
-    stub[2] = 0xf2c00010 | (((sym >> 32) & 0xffff) << 5); // movk x16, ..., lsl 32
-    stub[3] = 0xf2e00010 | (((sym >> 48) & 0xffff) << 5); // movk x16, ..., lsl 48
-    stub[4] = 0xd61f0200; // br x16
-
-    int retval = mprotect(stub, 5 * sizeof(uint32_t), PROT_READ|PROT_EXEC);
-    if (retval < 0)
-        return retval;
+    int ret = mem_write_code(stub, stcode, sizeof(stcode));
+    if (ret < 0)
+        return ret;
 
     *out_stub = (uintptr_t) stub;
     return 0;
@@ -273,7 +274,10 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
     if (rela_shdr->sh_info == 0 || rela_shdr->sh_info >= re->re_ehdr->e_shnum)
         return -EINVAL;
     Elf64_Shdr* tgt_shdr = &re->re_shdr[rela_shdr->sh_info];
-    uint8_t* tgt_sec_addr = re->base + tgt_shdr->sh_offset;
+    if (!(tgt_shdr->sh_flags & SHF_ALLOC))
+        return -EINVAL;
+
+    uint8_t* sec_write_addr = re->base + tgt_shdr->sh_offset;
 
     unsigned symtab_idx = rela_shdr->sh_link;
 
@@ -283,14 +287,14 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
             return -EINVAL;
 
         unsigned sym_idx = ELF64_R_SYM(elf_rela->r_info);
-        uint8_t* tgt = tgt_sec_addr + elf_rela->r_offset;
-
         uint64_t sym;
         if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
             return -EINVAL;
         uint64_t syma = sym + elf_rela->r_addend;
-        int64_t prel_syma = syma - (int64_t) tgt;
+        uint64_t pc = tgt_shdr->sh_addr + elf_rela->r_offset;
+        int64_t prel_syma = syma - (int64_t) pc;
 
+        uint8_t* tgt = sec_write_addr + elf_rela->r_offset;
         switch (ELF64_R_TYPE(elf_rela->r_info)) {
 #if defined(__x86_64__)
         case R_X86_64_64:
@@ -329,14 +333,14 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
                 int ret = rtld_elf_add_stub(syma, &stub);
                 if (ret < 0)
                     return ret;
-                prel_syma = stub - (uintptr_t) tgt;
+                prel_syma = stub - pc;
             }
             if (!rtld_elf_signed_range(prel_syma, 28, "R_AARCH64_JUMP26"))
                 return -EINVAL;
             *((uint32_t*) tgt) |= (prel_syma >> 2) & 0x3ffffff;
             break;
         case R_AARCH64_ADR_PREL_PG_HI21:
-            prel_syma = ALIGN_DOWN(syma, 1<<12) - ALIGN_DOWN((int64_t) tgt, 1<<12);
+            prel_syma = ALIGN_DOWN(syma, 1<<12) - ALIGN_DOWN(pc, 1<<12);
             prel_syma >>= 12;
             if (!rtld_elf_signed_range(prel_syma, 21, "R_AARCH64_PG_HI21"))
                 return -EINVAL;
@@ -417,6 +421,22 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
 
     int i, j;
     Elf64_Shdr* elf_shnt;
+    // First pass to check flags and allocate memory, if needed.
+    for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
+        // We don't support more flags
+        if (elf_shnt->sh_flags & ~(SHF_ALLOC|SHF_EXECINSTR|SHF_MERGE|SHF_MERGE)) {
+            dprintf(2, "unsupported section flags\n");
+            return -EINVAL;
+        }
+        if (elf_shnt->sh_flags & SHF_ALLOC) {
+            void* addr = mem_alloc_code(elf_shnt->sh_size, elf_shnt->sh_addralign);
+            if (BAD_ADDR(addr))
+                return (int) (uintptr_t) addr;
+            elf_shnt->sh_addr = (Elf64_Xword) addr;
+        }
+    }
+
+    // Second pass to resolve relocations, now that all sections are allocated.
     for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
         retval = -EINVAL;
         switch (elf_shnt->sh_type) {
@@ -461,8 +481,6 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
         case SHT_STRTAB:
         case SHT_X86_64_UNWIND:
             // don't care too much
-            if (elf_shnt->sh_flags & SHF_WRITE)
-                goto out;
             break;
         case SHT_NOBITS: // .bss not supported
         default: // unhandled section header
@@ -470,12 +488,16 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
         }
     }
 
-    // Remap object file as executable
-    retval = mprotect(obj_base, obj_size, PROT_READ|PROT_EXEC);
-    if (retval < 0)
-        goto out;
-
-    retval = 0;
+    // Third pass to actually copy code into target allocation
+    for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
+        if (elf_shnt->sh_flags & SHF_ALLOC) {
+            uint8_t* src = re.base + elf_shnt->sh_offset;
+            void* dst = (void*) elf_shnt->sh_addr;
+            retval = mem_write_code(dst, src, elf_shnt->sh_size);
+            if (retval < 0)
+                goto out;
+        }
+    }
 
 out:
     return retval;
@@ -483,7 +505,8 @@ out:
 
 int
 rtld_init(Rtld* r) {
-    RtldObject* objects = mem_alloc(sizeof(RtldObject) * (1 << RTLD_HASH_BITS));
+    size_t table_size = sizeof(RtldObject) * (1 << RTLD_HASH_BITS);
+    RtldObject* objects = mem_alloc_data(table_size, getpagesize());
     if (BAD_ADDR(objects))
         return (int) (uintptr_t) objects;
 

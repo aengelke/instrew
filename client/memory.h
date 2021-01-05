@@ -5,7 +5,10 @@
 #include <common.h>
 
 int mem_init(void);
-void* mem_alloc(size_t size);
-int mem_free(void* addr, size_t size);
+
+void* mem_alloc_data(size_t size, size_t alignment);
+
+void* mem_alloc_code(size_t size, size_t alignment);
+int mem_write_code(void* dst, const void* src, size_t size);
 
 #endif

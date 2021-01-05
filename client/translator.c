@@ -92,6 +92,8 @@ int translator_init(Translator* t, const char* tool) {
 
     t->written_bytes = 0;
     t->last_hdr = (TranslatorMsgHdr) {MSGID_UNKNOWN, 0};
+    t->recvbuf = NULL;
+    t->recvbuf_sz = 0;
 
     return ret;
 }
@@ -205,14 +207,22 @@ int translator_get_object(Translator* t, void** out_obj, size_t* out_obj_size) {
     if (sz < 0)
         return sz;
 
-    void* obj = mem_alloc(sz);
-    if (BAD_ADDR(obj))
-        return (int) (uintptr_t) obj;
-    int ret = read_full(t->rd_fd, obj, sz);
+    if ((uint32_t) sz >= t->recvbuf_sz) {
+        // TODO: free old buffer
+        // int ret = mem_free(t->recvbuf);
+        // if (ret)
+        //     return ret;
+        size_t newsz = ALIGN_UP(sz, getpagesize());
+        t->recvbuf = mem_alloc_data(newsz, getpagesize());
+        if (BAD_ADDR(t->recvbuf))
+            return (int) (uintptr_t) t->recvbuf;
+        t->recvbuf_sz = newsz;
+    }
+    int ret = read_full(t->rd_fd, t->recvbuf, sz);
     if (ret != (ssize_t) sz)
         return ret;
 
-    *out_obj = obj;
+    *out_obj = t->recvbuf;
     *out_obj_size = sz;
 
     return 0;

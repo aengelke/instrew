@@ -14,6 +14,9 @@ struct Translator {
 
     size_t written_bytes;
     TranslatorMsgHdr last_hdr;
+
+    void* recvbuf;
+    size_t recvbuf_sz;
 };
 
 typedef struct Translator Translator;
