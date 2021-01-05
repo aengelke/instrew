@@ -35,7 +35,6 @@ static int translator_init_child(void* args_cp) {
         goto fail;
 
     const char* exec_args[] = {args->tool, NULL};
-    const char* envp[] = {NULL};
     ret = execve(args->tool, exec_args, (const char* const*) environ);
     if (ret < 0)
         goto fail;
@@ -160,12 +159,12 @@ static int translator_config_write_str(Translator* t, uint8_t id, const char* va
     if ((ret = write_full(t->wr_fd, &id, sizeof(id))) != sizeof(id))
         return ret;
     size_t len64 = strlen(val);
-    if (len64 > UINT32_MAX)
+    if (len64 > INT32_MAX)
         return -EINVAL;
-    uint32_t len32 = len64;
+    int32_t len32 = len64;
     if ((ret = write_full(t->wr_fd, &len32, sizeof(len32))) != sizeof(len32))
         return ret;
-    if ((ret = write_full(t->wr_fd, val, len64)) != len64)
+    if ((ret = write_full(t->wr_fd, val, len32)) != len32)
         return ret;
     return 0;
 }

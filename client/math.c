@@ -116,7 +116,7 @@ main(void) {
         count++; \
         FLOAT_TY _a = (a), _b = (b); \
         unsigned ok = F_AS_I(_a) == F_AS_I(_b); \
-        printf("%s %d - " #a " == " #b "\n", "not ok" + 4*ok, count); \
+        printf("%s %d - " #a " == " #b "\n", &"not ok"[4*ok], count); \
         if (!ok) { \
             printf("# %lf (%"PRIxN") != %lf (%"PRIxN")\n", \
                    _a, F_AS_I(_a), _b, F_AS_I(_b)); \

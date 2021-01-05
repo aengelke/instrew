@@ -59,6 +59,8 @@ public:
                           INSTREW_DESC_CACHABLE;
         out_desc->name = "Strace";
         out_desc->uuid = "58211e41-b2be-44eb-9d52-806059aa01f4";
+
+        (void) config;
     }
 
     ~Instrumenter() {}

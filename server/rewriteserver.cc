@@ -63,23 +63,15 @@ static llvm::Function* CreateFunc(llvm::LLVMContext& ctx,
     return fn;
 }
 
-template<typename F>
-static llvm::Function* CreateFuncImpl(llvm::LLVMContext& ctx,
-                                      const std::string name, const F& f) {
-    llvm::Function* fn = CreateFunc(ctx, name, /*hhvm=*/false,
+static llvm::Function* CreateNoopFn(llvm::LLVMContext& ctx) {
+    llvm::Function* fn = CreateFunc(ctx, "noop_stub", /*hhvm=*/false,
                                     /*external=*/false);
     fn->addFnAttr(llvm::Attribute::AlwaysInline);
 
     llvm::BasicBlock* bb = llvm::BasicBlock::Create(ctx, "", fn);
     llvm::IRBuilder<> irb(bb);
-    f(irb, fn->arg_begin());
+    irb.CreateRetVoid();
     return fn;
-}
-
-static llvm::Function* CreateNoopFn(llvm::LLVMContext& ctx) {
-    return CreateFuncImpl(ctx, "noop_stub", [](llvm::IRBuilder<>& irb, llvm::Value* arg) {
-        irb.CreateRetVoid();
-    });
 }
 
 static llvm::Function* CreateMarkerFn(llvm::LLVMContext& ctx) {

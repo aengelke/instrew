@@ -27,6 +27,8 @@ public:
                           INSTREW_DESC_CACHABLE | INSTREW_DESC_MARK_INSTRS;
         out_desc->name = "InstrCount";
         out_desc->uuid = "3ffc0f58-3a8f-4fa4-a14f-ec987f2a8e8c";
+
+        (void) config;
     }
 
     ~Instrumenter() {}

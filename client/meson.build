@@ -10,6 +10,8 @@ sources = files(
     'translator.c',
 )
 
+client_c_args = ['-D_GNU_SOURCE', '-nostdlib', '-fno-builtin',
+                 '-fno-stack-protector', '-fomit-frame-pointer', '-fPIC']
 client_link_args = ['-nostdlib', '-nostartfiles', '-lgcc']
 
 cc = meson.get_compiler('c')
@@ -25,7 +27,7 @@ configure_file(configuration: config_data, output: 'instrew-client-config.h')
 
 executable('instrew', sources,
            include_directories: include_directories('.', '../shared'),
-           c_args: ['-D_GNU_SOURCE', '-nostdlib', '-nostartfiles', '-fno-builtin', '-fno-stack-protector', '-fomit-frame-pointer', '-fPIC'],
+           c_args: client_c_args,
            link_args: client_link_args,
            install: true)
 

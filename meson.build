@@ -9,10 +9,6 @@ project('instrew', ['c', 'cpp'],
 
 add_project_arguments(['-Wmissing-field-initializers',
                        '-Wunused-parameter',
-                       '-Wold-style-definition',
-                       '-Wmissing-declarations',
-                       '-Wmissing-prototypes',
-                       '-Wmissing-noreturn',
                        '-Wshadow',
                        '-Wpointer-arith',
                        '-Wcast-align',
@@ -21,21 +17,12 @@ add_project_arguments(['-Wmissing-field-initializers',
                        '-Wformat-nonliteral',
                        '-Wformat-security',
                        '-Wswitch-default',
-                       '-Winit-self',
-                       '-Wnested-externs',
-                       '-Wstrict-prototypes',
-                       '-Wmissing-include-dirs',
                        '-Wundef',
-                       # '-Wconversion',
                        '-Werror=incompatible-pointer-types',
-                       '-Werror=implicit-function-declaration',
-                       '-Wno-sign-conversion',
-                       '-Wno-overlength-strings',
-                       '-Wmissing-format-attribute'],
+                       '-Werror=implicit-function-declaration'],
                       language: 'c')
 
 add_global_arguments(['-fno-rtti'], language: 'cpp')
-add_project_arguments(['-Wno-unused-parameter'], language: 'cpp')
 
 libllvm = dependency('llvm', version: ['>=8', '<10'])
 

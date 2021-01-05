@@ -12,6 +12,16 @@
 #include <linux/time.h>
 #include <linux/unistd.h>
 
+#ifndef __has_attribute
+#define __has_attribute(x) 0
+#endif
+
+#if __has_attribute(externally_visible)
+#define GNU_FORCE_EXTERN __attribute__((externally_visible))
+#else
+#define GNU_FORCE_EXTERN
+#endif
+
 #define ssize_t intptr_t
 #define off_t intptr_t
 

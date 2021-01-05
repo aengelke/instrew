@@ -12,7 +12,7 @@
 // dispatcher on x86-64 below.
 uintptr_t resolve_func(struct State*, uintptr_t);
 
-__attribute__((externally_visible)) uintptr_t
+uintptr_t
 resolve_func(struct State* state, uintptr_t addr) {
     void* func;
     int retval = rtld_resolve(&state->rtld, addr, &func);
@@ -58,7 +58,7 @@ error:
 #define QUICK_TLB_BITS 10
 #define QUICK_TLB_HASH(addr) (((addr) >> 2) & ((1 << QUICK_TLB_BITS) - 1))
 
-static void
+void
 print_trace(struct State* state, uintptr_t addr) {
     uint64_t* cpu_state = (uint64_t*) state->cpu;
     if (state->config.print_trace) {
@@ -80,7 +80,6 @@ print_trace(struct State* state, uintptr_t addr) {
 // Used for PLT.
 void dispatch_cdecl(uint64_t*);
 
-__attribute__((externally_visible))
 inline void dispatch_cdecl(uint64_t* cpu_state) {
     struct State* state = STATE_FROM_CPU_STATE(cpu_state);
     uint64_t(* quick_tlb)[2] = QTLB_FROM_CPU_STATE(cpu_state);

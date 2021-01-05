@@ -246,8 +246,8 @@ char** environ;
 static const size_t* __auxvptr;
 static size_t pagesize;
 
-inline long syscall(long number, long a1, long a2, long a3, long a4, long a5,
-                    long a6) {
+long syscall(long number, long a1, long a2, long a3, long a4, long a5,
+             long a6) {
     return syscall6(number, a1, a2, a3, a4, a5, a6);
 }
 
@@ -537,7 +537,7 @@ vsnprintf(char* str, size_t size, const char* format, va_list args)
     return result;
 }
 
-__attribute__((externally_visible))
+GNU_FORCE_EXTERN
 int
 snprintf(char* str, size_t size, const char* format, ...)
 {
@@ -602,7 +602,7 @@ size_t getpagesize(void) {
     return pagesize;
 }
 
-__attribute__((externally_visible))
+GNU_FORCE_EXTERN
 void* memset(void* s, int c, size_t n) {
     unsigned char* sptr = s;
     for (; n > 0; n--, sptr++)
@@ -619,7 +619,7 @@ int memcmp(const void* s1, const void* s2, size_t n) {
     return 0;
 }
 
-__attribute__((externally_visible))
+GNU_FORCE_EXTERN
 void* memcpy(void* dest, const void* src, size_t n) {
     uint8_t* s1ptr = dest;
     const uint8_t* s2ptr = src;
@@ -629,7 +629,7 @@ void* memcpy(void* dest, const void* src, size_t n) {
 }
 
 __attribute__((noreturn))
-__attribute__((externally_visible))
+GNU_FORCE_EXTERN
 void
 __start_main(const size_t* initial_stack, const size_t* dynv)
 {

@@ -37,7 +37,7 @@ struct PltEntry {
 
 // Declare functions, but avoid name collision in C.
 #define PLT_ENTRY(name, func) \
-        extern char PASTE(rtld_plt_, func) __asm__(STRINGIFY(func));
+        extern void PASTE(rtld_plt_, func)() __asm__(STRINGIFY(func));
 #include "plt.inc"
 #undef PLT_ENTRY
 
@@ -226,9 +226,9 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* 
     return 0;
 }
 
+#if defined(__aarch64__)
 static int
 rtld_elf_add_stub(uintptr_t sym, uintptr_t* out_stub) {
-#if defined(__aarch64__)
     uint32_t* stub = mem_alloc(5 * sizeof(uint32_t));
     if (BAD_ADDR(stub))
         return (int) (uintptr_t) stub;
@@ -245,12 +245,8 @@ rtld_elf_add_stub(uintptr_t sym, uintptr_t* out_stub) {
 
     *out_stub = (uintptr_t) stub;
     return 0;
-#else
-    (void) sym;
-    (void) out_stub;
-    return -EOPNOTSUPP;
-#endif
 }
+#endif
 
 static bool
 rtld_elf_signed_range(int64_t val, unsigned bits, const char* relinfo) {
