@@ -33,7 +33,180 @@ static uint64_t pointerOffset(llvm::Value* base, llvm::Value* ptr,
     return offset;
 }
 
+// Note: replace with C++20 std::span.
+template<typename T>
+class span {
+    T* ptr;
+    std::size_t len;
+public:
+    constexpr span() noexcept : ptr(nullptr), len(0) {}
+    template<std::size_t N>
+    constexpr span(T (&arr)[N]) noexcept : ptr(arr), len(N) {}
+    constexpr span           (const span&) noexcept = default;
+    constexpr span& operator=(const span&) noexcept = default;
+    constexpr std::size_t size() const noexcept { return len; }
+    constexpr T* begin() const { return &ptr[0]; }
+    constexpr T* end() const { return &ptr[len]; }
+    constexpr T& operator[](std::size_t idx) const { return ptr[idx]; }
+};
+
+struct SptrField {
+    unsigned offset;
+    uint8_t size;
+    uint8_t argidx;
+    uint8_t retidx;
+};
+
+static constexpr unsigned SPTR_MAX_CNT = 16;
 static constexpr unsigned SPTR_MAX_OFF = 13*8;
+
+using SptrFieldSet = std::bitset<SPTR_MAX_CNT>;
+using SptrFieldMap = std::array<char, SPTR_MAX_OFF>;
+static constexpr SptrFieldMap CreateSptrMap(const span<const SptrField> fields) {
+    SptrFieldMap res{};
+    for (unsigned i = 0; i < fields.size(); i++) {
+        const SptrField field = fields[i];
+        res[field.offset] = i + 1;
+        for (unsigned j = field.offset + 1; j < field.offset + field.size; j++)
+            res[j] = -1;
+    }
+    return res;
+}
+
+struct CCState {
+    const llvm::DataLayout& DL;
+    llvm::Function* nfn;
+    llvm::Argument* sptr;
+    const SptrFieldMap& fieldmap;
+    span<const SptrField> fields;
+
+    SptrFieldMap::value_type GetFieldIdx(size_t idx) {
+        return idx < fieldmap.size() ? fieldmap[idx] : 0;
+    }
+
+    llvm::Value* GetValue(const SptrField& field, llvm::Instruction* call,
+                          llvm::IRBuilder<> irb) {
+        if (call)
+            return irb.CreateExtractValue(call, field.retidx);
+        else
+            return nfn->arg_begin() + field.argidx;
+    }
+
+    void FoldLoads(llvm::Instruction* call) {
+        llvm::IRBuilder<> irb(nfn->getContext());
+        llvm::BasicBlock::iterator it, end;
+        if (!call)
+            it = nfn->getEntryBlock().begin(), end = nfn->getEntryBlock().end();
+        else
+            it = ++call->getIterator(), end = call->getParent()->end();
+
+        llvm::SmallVector<llvm::Instruction*, 64> deadinsts;
+        for (; it != end; ++it) {
+            if (it->mayWriteToMemory())
+                break;
+            llvm::LoadInst* load = llvm::dyn_cast<llvm::LoadInst>(it);
+            if (!load)
+                continue;
+            if (load->getPointerAddressSpace() != sptr->getType()->getPointerAddressSpace())
+                continue;
+            // TODO: use llvm::isPointerOffset
+            auto off = pointerOffset(sptr, load->getPointerOperand(), DL);
+            if (GetFieldIdx(off) <= 0)
+                continue;
+            irb.SetInsertPoint(load);
+            llvm::Value* repl = GetValue(fields[fieldmap[off] - 1], call, irb);
+            if (load->getType() == repl->getType()) {
+                load->replaceAllUsesWith(repl);
+                deadinsts.push_back(load);
+            }
+        }
+        for (auto* inst : deadinsts)
+            inst->eraseFromParent();
+    }
+
+    void CreateStores(llvm::CallInst* call) {
+        if (call && call->isMustTailCall())
+            return;
+        llvm::IRBuilder<> irb(nfn->getContext());
+        if (call)
+            irb.SetInsertPoint(call->getParent(), ++call->getIterator());
+        else
+            irb.SetInsertPoint(&nfn->getEntryBlock(), nfn->getEntryBlock().getFirstInsertionPt());
+        unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
+        for (unsigned i = 0; i < fields.size(); i++) {
+            llvm::Value* val = GetValue(fields[i], call, irb);
+            llvm::Value* gep = irb.CreateConstGEP1_64(sptr, fields[i].offset);
+            llvm::Type* ptr_ty = val->getType()->getPointerTo(sptr_as);
+            irb.CreateStore(val, irb.CreatePointerCast(gep, ptr_ty));
+        }
+    }
+
+    void FoldStores(llvm::Instruction* callret, bool sptr_escapes,
+                    const SptrFieldSet& written_fields) {
+        llvm::IRBuilder<> irb(callret);
+        auto ret_ty = llvm::cast<llvm::StructType>(nfn->getReturnType());
+        unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
+
+        llvm::SmallVector<llvm::Instruction*, SPTR_MAX_CNT> deadinsts;
+        llvm::SmallVector<llvm::Value*, SPTR_MAX_CNT> vals;
+        vals.resize(fields.size());
+        auto end = callret->getParent()->rend();
+        for (auto it = ++callret->getReverseIterator(); it != end; ++it) {
+            auto store = llvm::dyn_cast<llvm::StoreInst>(&*it);
+            if (!store || store->getPointerAddressSpace() != sptr_as)
+                break;
+            llvm::Value* stval = store->getValueOperand();
+            auto off = pointerOffset(sptr, store->getPointerOperand(), DL);
+            int fieldidx = GetFieldIdx(off);
+            if (fieldidx > 0 && !vals[fieldidx - 1]) {
+                vals[fieldidx - 1] = stval;
+                if (!sptr_escapes)
+                    deadinsts.push_back(store);
+            }
+        }
+
+        for (unsigned i = 0; i < fields.size(); i++) {
+            if (vals[i])
+                continue;
+            if (written_fields[i] || sptr_escapes) {
+                // Need to load
+                llvm::Value* gep = irb.CreateConstGEP1_64(sptr, fields[i].offset);
+                llvm::Type* elem_ty = ret_ty->getElementType(fields[i].retidx);
+                llvm::Value* ptr = irb.CreatePointerCast(gep, elem_ty->getPointerTo(sptr_as));
+                vals[i] = irb.CreateLoad(elem_ty, ptr);
+            } else {
+                // TODO: adapt so that for callret values are propagated using
+                // PHI nodes.
+                vals[i] = nfn->arg_begin() + fields[i].argidx;
+            }
+        }
+
+        if (auto call = llvm::dyn_cast<llvm::CallInst>(callret)) {
+            llvm::Function* tgt = call->getCalledFunction();
+            llvm::FunctionType* tgt_ty = tgt->getFunctionType();
+            llvm::SmallVector<llvm::Value*, SPTR_MAX_CNT+1> params;
+            params.resize(tgt_ty->getNumParams());
+            params[sptr->getArgNo()] = sptr;
+            for (unsigned i = 0; i < fields.size(); i++)
+                params[fields[i].argidx] = vals[i];
+
+            auto newcall = irb.CreateCall(tgt_ty, tgt, params);
+            newcall->setTailCallKind(call->getTailCallKind());
+            newcall->setCallingConv(tgt->getCallingConv());
+            newcall->setAttributes(tgt->getAttributes());
+            call->replaceAllUsesWith(newcall);
+        } else {
+            llvm::Value* ret_val = llvm::UndefValue::get(ret_ty);
+            for (unsigned i = 0; i < fields.size(); i++)
+                ret_val = irb.CreateInsertValue(ret_val, vals[i], {fields[i].retidx});
+            irb.CreateRet(ret_val);
+        }
+
+        for (auto* inst : deadinsts)
+            inst->eraseFromParent();
+        callret->eraseFromParent();
+    }
+};
 
 llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     if (cc == CallConv::CDECL)
@@ -46,26 +219,38 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     unsigned sptr_as = sptr_ty->getPointerAddressSpace();
     llvm::Type* i64 = llvm::Type::getInt64Ty(ctx);
 
-    const short* arg_map;
-    const short* ret_map;
+    llvm::Function* call_fn_cdecl = mod->getFunction("instrew_call_cdecl");
+    llvm::Function* tail_fn = nullptr;
+    llvm::Function* call_fn = nullptr;
+
+    const SptrFieldMap* fieldmap;
+    span<const SptrField> fields;
     llvm::StructType* ret_ty;
     llvm::FunctionType* fn_ty;
     llvm::Function* nfn;
-    llvm::Value* sptr;
+    llvm::Argument* sptr;
     auto linkage = fn->getLinkage();
 
     switch (cc) {
     case CallConv::HHVM: {
-        static const short hhvm_args[] = {
-            0, /*sptr*/ -1, 4*8, 5*8, 8*8, 7*8, 3*8, 2*8, 9*8, 10*8, 1*8, 11*8,
-            12*8, 6*8,
+        static const SptrField hhvm_fields[] = {
+            { 0x00, 8, 0,  0  },
+            { 0x08, 8, 10, 8  },
+            { 0x10, 8, 7,  5  },
+            { 0x18, 8, 6,  4  },
+            { 0x20, 8, 2,  1  },
+            { 0x28, 8, 3,  13 },
+            { 0x30, 8, 13, 11 },
+            { 0x38, 8, 5,  3  },
+            { 0x40, 8, 4,  2  },
+            { 0x48, 8, 8,  6  },
+            { 0x50, 8, 9,  7  },
+            { 0x58, 8, 11, 9  },
+            { 0x60, 8, 12, 10 },
         };
-        static const short hhvm_ret[] = {
-            0, 4*8, 8*8, 7*8, 3*8, 2*8, 9*8, 10*8, 1*8, 11*8, 12*8, 6*8,
-            /*unused*/ -1, 5*8,
-        };
-        arg_map = hhvm_args;
-        ret_map = hhvm_ret;
+        static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
+        fields = hhvm_fields;
+        fieldmap = &hhvm_fieldmap;
         ret_ty = llvm::StructType::get(i64, i64, i64, i64, i64, i64, i64,
                                        i64, i64, i64, i64, i64, i64, i64);
         fn_ty = llvm::FunctionType::get(ret_ty,
@@ -78,16 +263,22 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         al = al.addParamAttributes(ctx, 1, al.getParamAttributes(0));
         nfn->setAttributes(al.removeParamAttributes(ctx, 0));
         nfn->setCallingConv(llvm::CallingConv::HHVM);
-        nfn->addParamAttr(1, llvm::Attribute::NoAlias);
-        nfn->addParamAttr(1, llvm::Attribute::NoCapture);
-        nfn->addParamAttr(1, llvm::Attribute::getWithAlignment(ctx, 16));
         sptr = &nfn->arg_begin()[1];
+
+        if (call_fn_cdecl) {
+            tail_fn = llvm::cast<llvm::Function>(mod->getOrInsertFunction("instrew_tail_hhvm", fn_ty).getCallee());
+            tail_fn->copyAttributesFrom(nfn);
+            call_fn = llvm::cast<llvm::Function>(mod->getOrInsertFunction("instrew_call_hhvm", fn_ty).getCallee());
+            call_fn->copyAttributesFrom(nfn);
+        }
         break;
     }
     case CallConv::CDECL:
     default:
         assert(false && "unsupported Instrew calling convention!");
     }
+
+    CCState ccs{DL, nfn, sptr, *fieldmap, fields};
 
     // Move basic blocks from one function to another. Because all code is
     // unoptimized at this point, copying (either by CloneFunctionInto or
@@ -109,48 +300,36 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     llvm::BasicBlock* entry_bb = &nfn->getEntryBlock();
     llvm::IRBuilder<> irb(entry_bb);
 
-    // First fold known loads.
     llvm::SmallVector<llvm::Instruction*, 16> deadinsts;
-    for (llvm::Instruction& instr : *entry_bb) {
-        if (instr.mayWriteToMemory())
-            break;
-        llvm::LoadInst* load = llvm::dyn_cast<llvm::LoadInst>(&instr);
-        if (!load)
-            continue;
-        if (load->getPointerAddressSpace() != sptr_as)
-            continue;
-        // TODO: use llvm::isPointerOffset
-        auto off = pointerOffset(sptr, load->getPointerOperand(), DL);
-        if (off >= SPTR_MAX_OFF)
-            continue;
-        for (unsigned ai = 0; ai < nfn->arg_size(); ai++) {
-            if (arg_map[ai] != off)
-                continue;
-            llvm::Value* arg = nfn->arg_begin() + ai;
-            if (load->getType() == arg->getType()) {
-                load->replaceAllUsesWith(arg);
-                deadinsts.push_back(load);
-            }
-            break;
+
+    // Find all calls to call/tail functions.
+    llvm::SmallVector<llvm::CallInst*, 16> callret_calls;
+    if (call_fn_cdecl) {
+        for (auto* user : call_fn_cdecl->users())
+            if (auto call = llvm::dyn_cast<llvm::CallInst>(user))
+                if (call->getCalledFunction() == call_fn_cdecl)
+                    callret_calls.push_back(call);
+        for (size_t i = 0; i < callret_calls.size(); i++) {
+            llvm::CallInst* call = callret_calls[i];
+            auto tgt = call->isMustTailCall() ? tail_fn : call_fn;
+            auto newcall = llvm::CallInst::Create(fn_ty, tgt, "", call);
+            newcall->setTailCallKind(call->getTailCallKind());
+            newcall->setCallingConv(tgt->getCallingConv());
+            newcall->setAttributes(tgt->getAttributes());
+            call->eraseFromParent();
+            callret_calls[i] = newcall;
         }
     }
-    for (auto* load : deadinsts)
-        load->eraseFromParent();
-    deadinsts.clear();
 
-    std::bitset<SPTR_MAX_OFF> mapped_bytes;
-    for (unsigned ai = 0; ai < nfn->arg_size(); ai++) {
-        llvm::Value* arg = nfn->arg_begin() + ai;
-        uint64_t tysz = DL.getTypeAllocSize(arg->getType());
-        for (uint64_t b = arg_map[ai]; b < arg_map[ai] + tysz; b++)
-            mapped_bytes.set(b);
-    }
+    // First fold known loads.
+    ccs.FoldLoads(nullptr);
+    for (auto* call : callret_calls)
+        ccs.FoldLoads(call);
 
     // Now find all bytes which are still read and written somewhere during
     // the function, and check whether sptr escapes the function.
-    std::bitset<SPTR_MAX_OFF> read_bytes;
-    std::bitset<SPTR_MAX_OFF> written_bytes;
     bool sptr_escapes = false;
+    SptrFieldSet written_fields;
 
     llvm::DenseMap<llvm::Value*, unsigned> visited;
     llvm::SmallVector<llvm::Value*, 16> queue;
@@ -166,25 +345,33 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
                     continue;
                 if (inst->getOpcode() == llvm::Instruction::Store) {
                     auto store = llvm::cast<llvm::StoreInst>(inst);
-                    if (store->getPointerAddressSpace() != sptr_as) {
-                        sptr_escapes = true;
+                    if (store->getPointerOperand() != val)
                         goto end_escape;
-                    }
                     uint64_t tysz = DL.getTypeAllocSize(store->getValueOperand()->getType());
-                    for (uint64_t b = off; b < off + tysz && b < SPTR_MAX_OFF; b++)
-                        written_bytes.set(b);
-                    break;
+                    if (off >= SPTR_MAX_OFF)
+                        continue;
+                    int fieldidx = ccs.GetFieldIdx(off);
+                    if (fieldidx <= 0) {
+                        // Check for partial overwrites
+                        for (unsigned i = off; i < off + tysz; i++)
+                            if (ccs.GetFieldIdx(i))
+                                goto end_escape;
+                        continue;
+                    } else {
+                        if (tysz != fields[fieldidx - 1].size)
+                            goto end_escape;
+                        written_fields.set(fieldidx - 1);
+                    }
                 } else if (inst->getOpcode() == llvm::Instruction::Load) {
                     uint64_t tysz = DL.getTypeAllocSize(inst->getType());
-                    for (uint64_t b = off; b < off + tysz && b < SPTR_MAX_OFF; b++)
-                        read_bytes.set(b);
-                    break;
+                    // Check for partial or unremoved reads
+                    for (unsigned i = off; i < off + tysz; i++)
+                        if (ccs.GetFieldIdx(i))
+                            goto end_escape;
                 } else if (inst->isCast()) {
                     llvm::Type* dstty = inst->getType();
-                    if (!dstty->isPointerTy() || dstty->getPointerAddressSpace() != sptr_as) {
-                        sptr_escapes = true;
+                    if (!dstty->isPointerTy() || dstty->getPointerAddressSpace() != sptr_as)
                         goto end_escape;
-                    }
                     visited[inst] = off;
                     new_queue.push_back(inst);
                 } else if (inst->getOpcode() == llvm::Instruction::GetElementPtr) {
@@ -196,7 +383,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
                     visited[inst] = off + tysz * op->getSExtValue();
                     new_queue.push_back(inst);
                 } else if (inst->getOpcode() == llvm::Instruction::Call) {
-                    sptr_escapes = true;
+                    // call/tail calls currently have no arguments
                     goto end_escape;
                 } else {
                     inst->print(llvm::errs());
@@ -207,24 +394,15 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         queue = std::move(new_queue);
     }
 end_escape:
+    // If we aborted the loop, the queue is not empty.
+    sptr_escapes = !queue.empty();
 
-    // Useful for debugging escape analysis.
-    // std::cerr << mapped_bytes << "\n" << read_bytes << "\n" << written_bytes
-    //           << "\n" << sptr_escapes << std::endl;
-
-    read_bytes &= mapped_bytes;
-    written_bytes &= mapped_bytes;
-    if (read_bytes.any() || sptr_escapes) {
-        // We must add all loads in beginning
-        irb.SetInsertPoint(entry_bb, entry_bb->getFirstInsertionPt());
-        for (unsigned ai = 0; ai < nfn->arg_size(); ai++) {
-            if (arg_map[ai] < 0) // we can ignore the sptr, it never changes
-                continue;
-            llvm::Value* arg = nfn->arg_begin() + ai;
-            llvm::Value* gep = irb.CreateConstGEP1_64(sptr, arg_map[ai]);
-            llvm::Type* ptr_ty = arg->getType()->getPointerTo(sptr_as);
-            irb.CreateStore(arg, irb.CreatePointerCast(gep, ptr_ty));
-        }
+    // Check whether we must add necessary stores for all or specific fields.
+    // TODO: If unwritten fields are propagated, this is only necessary on escape
+    if (!callret_calls.empty() || sptr_escapes) {
+        ccs.CreateStores(nullptr);
+        for (auto* call : callret_calls)
+            ccs.CreateStores(call);
     }
 
     // Then, fold known stores. There should be at most one returning BB.
@@ -232,66 +410,18 @@ end_escape:
         auto* ret = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator());
         if (!ret)
             continue;
-
-        ret->eraseFromParent();
-        irb.SetInsertPoint(&bb);
-
-        llvm::SmallVector<llvm::Value*, 16> ret_vals;
-        ret_vals.resize(ret_ty->getNumElements());
-        // First try to get return values from the last stores in that block.
-        for (auto it = bb.rbegin(); it != bb.rend(); ++it) {
-            if (llvm::dyn_cast<llvm::LoadInst>(&*it))
-                break;
-            if (llvm::dyn_cast<llvm::ReturnInst>(&*it))
-                continue;
-            auto store = llvm::dyn_cast<llvm::StoreInst>(&*it);
-            if (!store || store->getPointerAddressSpace() != sptr_as)
-                break;
-            llvm::Value* stval = store->getValueOperand();
-            auto off = pointerOffset(sptr, store->getPointerOperand(), DL);
-            for (unsigned ri = 0; ri < ret_vals.size(); ri++) {
-                if (!ret_vals[ri] && ret_map[ri] == off &&
-                    stval->getType() == ret_ty->getElementType(ri)) {
-                    ret_vals[ri] = stval;
-                    deadinsts.push_back(store);
-                    break;
-                }
+        if (llvm::CallInst* tailcall = bb.getTerminatingMustTailCall()) {
+            if (!tailcall->getType()->isVoidTy()) {
+                llvm::ReturnInst::Create(ctx, tailcall, ret);
+                ret->eraseFromParent();
             }
+            continue;
         }
-        for (auto* store : deadinsts)
-            store->eraseFromParent();
-        deadinsts.clear();
 
-        // For the return values that are still missing, there can be two cases:
-        //  - The value was never modified, so we return the parameter.
-        //  - The value was eventually modified, so load the latest value.
-        for (unsigned i = 0; i < ret_vals.size(); i++) {
-            if (ret_vals[i])
-                continue;
-            llvm::Type* elem_ty = ret_ty->getElementType(i);
-            if (ret_map[i] < 0) {
-                ret_vals[i] = llvm::UndefValue::get(elem_ty);
-                continue;
-            }
-            uint64_t tysz = DL.getTypeAllocSize(elem_ty);
-            auto elem_map = (written_bytes >> ret_map[i]) << (SPTR_MAX_OFF - tysz);
-            if (elem_map.any() || sptr_escapes) {
-                // Need to load
-                llvm::Value* gep = irb.CreateConstGEP1_64(sptr, ret_map[i]);
-                llvm::Value* ptr = irb.CreatePointerCast(gep, elem_ty->getPointerTo(sptr_as));
-                ret_vals[i] = irb.CreateLoad(elem_ty, ptr);
-            } else {
-                // Forward parameter to return value
-                for (unsigned ai = 0; ai < nfn->arg_size(); ai++) {
-                    if (arg_map[ai] != ret_map[i])
-                        continue;
-                    ret_vals[i] = nfn->arg_begin() + ai;
-                    break;
-                }
-            }
-        }
-        irb.CreateAggregateRet(ret_vals.data(), ret_vals.size());
+        ccs.FoldStores(ret, !callret_calls.empty() || sptr_escapes, written_fields);
     }
+    for (auto* call : callret_calls)
+        ccs.FoldStores(call, !callret_calls.empty() || sptr_escapes, written_fields);
 
     return nfn;
 }

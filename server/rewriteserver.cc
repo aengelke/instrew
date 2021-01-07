@@ -264,17 +264,19 @@ int main(int argc, char** argv) {
     ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
     ll_config_enable_overflow_intrinsics(rlcfg, false);
     if (server_config.opt_callret_lifting) {
-        const char* tail_fn_name =
-            server_config.hhvm ? "instrew_tail_hhvm" : "instrew_tail_cdecl";
-        auto tail_fn = CreateFunc(ctx, tail_fn_name, server_config.hhvm);
-        helper_fns.push_back(tail_fn);
-        ll_config_set_tail_func(rlcfg, llvm::wrap(tail_fn));
-
-        const char* call_fn_name =
-            server_config.hhvm ? "instrew_call_hhvm" : "instrew_call_cdecl";
-        auto call_fn = CreateFunc(ctx, call_fn_name, server_config.hhvm);
-        helper_fns.push_back(call_fn);
-        ll_config_set_call_func(rlcfg, llvm::wrap(call_fn));
+        if (server_config.hhvm && !server_config.opt_new_callconv) {
+            auto tail_fn = CreateFunc(ctx, "instrew_tail_hhvm", /*hhvm=*/true);
+            auto call_fn = CreateFunc(ctx, "instrew_call_hhvm", /*hhvm=*/true);
+            helper_fns.push_back(tail_fn);
+            helper_fns.push_back(call_fn);
+            ll_config_set_tail_func(rlcfg, llvm::wrap(tail_fn));
+            ll_config_set_call_func(rlcfg, llvm::wrap(call_fn));
+        } else {
+            auto call_fn = CreateFunc(ctx, "instrew_call_cdecl", /*hhvm=*/false);
+            helper_fns.push_back(call_fn);
+            ll_config_set_tail_func(rlcfg, llvm::wrap(call_fn));
+            ll_config_set_call_func(rlcfg, llvm::wrap(call_fn));
+        }
     }
     if (server_config.guest_arch == EM_X86_64) {
         ll_config_set_architecture(rlcfg, "x86-64");
