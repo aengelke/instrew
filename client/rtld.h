@@ -11,8 +11,7 @@ typedef struct {
     size_t size;
 } RtldObject;
 struct Rtld {
-    void* addrspace;
-    size_t addrspace_size;
+    int perfmap_fd;
 
     RtldObject* objects;
     size_t objects_idx;
@@ -24,7 +23,7 @@ struct Rtld {
 };
 typedef struct Rtld Rtld;
 
-int rtld_init(Rtld* r);
+int rtld_init(Rtld* r, int perfmap_fd);
 int rtld_resolve(Rtld* r, uintptr_t addr, void** out_entry);
 
 int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size);

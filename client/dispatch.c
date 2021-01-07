@@ -41,11 +41,6 @@ resolve_func(struct State* state, uintptr_t addr) {
                              + (end_time.tv_nsec - start_time.tv_nsec);
             state->rew_time += time_ns;
         }
-
-        if (UNLIKELY(state->config.perfmap_fd >= 0)) {
-            dprintf(state->config.perfmap_fd, "%lx %lx src_%lx\n",
-                    (uintptr_t) obj_base, obj_size, addr);
-        }
     }
 
     return (uintptr_t) func;

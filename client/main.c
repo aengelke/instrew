@@ -224,7 +224,7 @@ int main(int argc, char** argv) {
         return -ENOEXEC;
     }
 
-    retval = rtld_init(&state.rtld);
+    retval = rtld_init(&state.rtld, state.config.perfmap_fd);
     if (retval < 0) {
         puts("error: could not initialize runtime linker");
         return retval;

@@ -470,6 +470,11 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
                 retval = rtld_set(r, addr, (void*) entry, obj_base, obj_size);
                 if (retval < 0)
                     goto out;
+
+                if (UNLIKELY(r->perfmap_fd >= 0)) {
+                    dprintf(r->perfmap_fd, "%lx %lx %s\n",
+                            entry, elf_sym->st_size, name);
+                }
             }
             break;
         case SHT_RELA:
@@ -504,13 +509,14 @@ out:
 }
 
 int
-rtld_init(Rtld* r) {
+rtld_init(Rtld* r, int perfmap_fd) {
     size_t table_size = sizeof(RtldObject) * (1 << RTLD_HASH_BITS);
     RtldObject* objects = mem_alloc_data(table_size, getpagesize());
     if (BAD_ADDR(objects))
         return (int) (uintptr_t) objects;
 
     r->objects = objects;
+    r->perfmap_fd = perfmap_fd;
 
     int retval = plt_create(&r->plt);
     if (retval < 0)
