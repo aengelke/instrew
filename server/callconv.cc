@@ -58,7 +58,7 @@ struct SptrField {
 };
 
 static constexpr unsigned SPTR_MAX_CNT = 16;
-static constexpr unsigned SPTR_MAX_OFF = 13*8;
+static constexpr unsigned SPTR_MAX_OFF = 0x100;
 
 using SptrFieldSet = std::bitset<SPTR_MAX_CNT>;
 using SptrFieldMap = std::array<char, SPTR_MAX_OFF>;
@@ -278,6 +278,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
         fields = hhvm_fields;
         fieldmap = &hhvm_fieldmap;
+    callconv_hhvm_common:
         ret_ty = llvm::StructType::get(i64, i64, i64, i64, i64, i64, i64,
                                        i64, i64, i64, i64, i64, i64, i64);
         fn_ty = llvm::FunctionType::get(ret_ty,
@@ -299,6 +300,27 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
             call_fn->copyAttributesFrom(nfn);
         }
         break;
+    }
+    case CallConv::RV64_X86_HHVM: {
+        static const SptrField hhvm_fields[] = {
+            { 0x00, 8, 0,  0  }, // pc
+            { 0x98, 8, 10, 8  }, // x18
+            { 0x10, 8, 7,  5  }, // x1/ra
+            { 0x18, 8, 6,  4  }, // x2/sp; must be 0x18 due initialization
+            { 0x48, 8, 2,  1  }, // x8
+            { 0x50, 8, 3,  13 }, // x9
+            { 0x58, 8, 13, 11 }, // x10
+            { 0x60, 8, 5,  3  }, // x11
+            { 0x68, 8, 4,  2  }, // x12
+            { 0x70, 8, 8,  6  }, // x13
+            { 0x78, 8, 9,  7  }, // x14
+            { 0x80, 8, 11, 9  }, // x15
+            { 0x90, 8, 12, 10 }, // x17
+        };
+        static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
+        fields = hhvm_fields;
+        fieldmap = &hhvm_fieldmap;
+        goto callconv_hhvm_common;
     }
     case CallConv::CDECL:
     default:

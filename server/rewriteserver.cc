@@ -264,7 +264,8 @@ int main(int argc, char** argv) {
     ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
     ll_config_enable_overflow_intrinsics(rlcfg, false);
     if (server_config.opt_callret_lifting) {
-        if (server_config.hhvm && !server_config.opt_new_callconv) {
+        if (server_config.guest_arch == EM_X86_64 && server_config.hhvm &&
+            !server_config.opt_new_callconv) {
             auto tail_fn = CreateFunc(ctx, "instrew_tail_hhvm", /*hhvm=*/true);
             auto call_fn = CreateFunc(ctx, "instrew_call_hhvm", /*hhvm=*/true);
             helper_fns.push_back(tail_fn);
@@ -285,7 +286,7 @@ int main(int argc, char** argv) {
         // currently use this to let Rellume generate HHVMCC functions.
         if (!server_config.opt_new_callconv)
             ll_config_set_hhvm(rlcfg, server_config.hhvm);
-        else
+        else if (server_config.hhvm)
             instrew_cc = CallConv::HHVM;
         client_config.tc_callconv = server_config.hhvm ? 1 : 0;
         client_config.tc_native_seg_regs = server_config.native_segments;
@@ -303,6 +304,10 @@ int main(int argc, char** argv) {
         ll_config_set_instr_impl(rlcfg, FDI_LDMXCSR, llvm::wrap(noop_fn));
     } else if (server_config.guest_arch == EM_RISCV) {
         ll_config_set_architecture(rlcfg, "rv64");
+        if (server_config.cpu == "x86-64" && server_config.hhvm) {
+            instrew_cc = CallConv::RV64_X86_HHVM;
+            client_config.tc_callconv = 1;
+        }
 
         auto syscall_fn = CreateFunc(ctx, "syscall_rv64");
         helper_fns.push_back(syscall_fn);

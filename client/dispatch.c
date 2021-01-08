@@ -116,15 +116,16 @@ ASM_BLOCK(
     .type dispatch_hhvm_resolve, @function;
 dispatch_hhvm_resolve: // stack alignment: hhvm
     // Save all cdecl caller-saved registers.
-    mov [r12 + 1 * 8], rax;
-    mov [r12 + 2 * 8], rcx;
-    mov [r12 + 3 * 8], rdx;
-    mov [r12 + 7 * 8], rsi;
-    mov [r12 + 8 * 8], rdi;
-    mov [r12 + 9 * 8], r8;
-    mov [r12 + 10 * 8], r9;
-    mov [r12 + 11 * 8], r10;
-    mov [r12 + 12 * 8], r11;
+    push rax; // For alignment
+    push rax;
+    push rcx;
+    push rdx;
+    push rsi;
+    push rdi;
+    push r8;
+    push r9;
+    push r10;
+    push r11;
     mov rdi, [r12 - 0x08]; // state
     mov rsi, rbx; // addr
     call resolve_func;
@@ -135,15 +136,16 @@ dispatch_hhvm_resolve: // stack alignment: hhvm
     mov [rdx + 8], rax; // func
     mov r14, rax; // return value
     // Restore callee-saved registers.
-    mov rax, [r12 + 1 * 8];
-    mov rcx, [r12 + 2 * 8];
-    mov rdx, [r12 + 3 * 8];
-    mov rsi, [r12 + 7 * 8];
-    mov rdi, [r12 + 8 * 8];
-    mov r8, [r12 + 9 * 8];
-    mov r9, [r12 + 10 * 8];
-    mov r10, [r12 + 11 * 8];
-    mov r11, [r12 + 12 * 8];
+    pop r11;
+    pop r10;
+    pop r9;
+    pop r8;
+    pop rdi;
+    pop rsi;
+    pop rdx;
+    pop rcx;
+    pop rax;
+    pop rax;
     ret;
     .size dispatch_hhvm_resolve, .-dispatch_hhvm_resolve;
 
