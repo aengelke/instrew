@@ -79,6 +79,8 @@ struct CCState {
     llvm::Argument* sptr;
     const SptrFieldMap& fieldmap;
     span<const SptrField> fields;
+    llvm::Function* call_fn;
+    llvm::Function* tail_fn;
 
     SptrFieldMap::value_type GetFieldIdx(size_t idx) {
         return idx < fieldmap.size() ? fieldmap[idx] : 0;
@@ -141,44 +143,71 @@ struct CCState {
         }
     }
 
-    void FoldStores(llvm::Instruction* callret, bool sptr_escapes,
-                    const SptrFieldSet& written_fields) {
+    using FoldedStores = llvm::SmallVector<llvm::Value*, SPTR_MAX_CNT>;
+    FoldedStores FoldStores(llvm::Instruction* callret,
+                           llvm::DenseMap<llvm::StoreInst*, unsigned>& stores) {
         llvm::IRBuilder<> irb(callret);
-        auto ret_ty = llvm::cast<llvm::StructType>(nfn->getReturnType());
         unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
 
         llvm::SmallVector<llvm::Instruction*, SPTR_MAX_CNT> deadinsts;
-        llvm::SmallVector<llvm::Value*, SPTR_MAX_CNT> vals;
+        FoldedStores vals;
         vals.resize(fields.size());
         auto end = callret->getParent()->rend();
         for (auto it = ++callret->getReverseIterator(); it != end; ++it) {
+            if (auto call = llvm::dyn_cast<llvm::CallInst>(&*it)) {
+                // Check whether sptr escapes here.
+                for (const auto& arg : call->args()) {
+                    llvm::Type* at = arg->getType();
+                    if (at->isPointerTy() && at->getPointerAddressSpace() == sptr_as)
+                        goto end_collect;
+                }
+                if (call->getCalledFunction() != call_fn &&
+                    call->getCalledFunction() != tail_fn)
+                    continue;
+                // This code path should be working, but is untested. The lifter
+                // currently only generates at most one call/tail per block.
+                // Tails naturally have nothing following them; calls need an
+                // immediately following check that the PC matches the expected
+                // address. For now, abort whenever this assumption changes.
+                assert(false && "more than one call/tail in a block!");
+                // Propagate values from last call/tail call.
+                for (unsigned i = 0; i < fields.size(); i++)
+                    if (!vals[i])
+                        vals[i] = GetValue(fields[i], call, irb);
+                break;
+            }
             auto store = llvm::dyn_cast<llvm::StoreInst>(&*it);
             if (!store || store->getPointerAddressSpace() != sptr_as)
-                break;
+                continue;
             llvm::Value* stval = store->getValueOperand();
             auto off = pointerOffset(sptr, store->getPointerOperand(), DL);
             int fieldidx = GetFieldIdx(off);
-            if (fieldidx > 0 && !vals[fieldidx - 1]) {
+            if (fieldidx > 0) {
+                assert(!vals[fieldidx - 1] && "dead store");
                 vals[fieldidx - 1] = stval;
-                if (!sptr_escapes)
-                    deadinsts.push_back(store);
+                stores.erase(store);
+                deadinsts.push_back(store);
             }
         }
+    end_collect:
+        for (auto* inst : deadinsts)
+            inst->eraseFromParent();
+        return vals;
+    }
 
+    void UpdateCallRet(llvm::Instruction* callret, bool sptr_escapes,
+                       FoldedStores& vals) {
+        llvm::IRBuilder<> irb(callret);
+        auto ret_ty = llvm::cast<llvm::StructType>(nfn->getReturnType());
+        unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
         for (unsigned i = 0; i < fields.size(); i++) {
             if (vals[i])
                 continue;
-            if (written_fields[i] || sptr_escapes) {
-                // Need to load
-                llvm::Value* gep = irb.CreateConstGEP1_64(sptr, fields[i].offset);
-                llvm::Type* elem_ty = ret_ty->getElementType(fields[i].retidx);
-                llvm::Value* ptr = irb.CreatePointerCast(gep, elem_ty->getPointerTo(sptr_as));
-                vals[i] = irb.CreateLoad(elem_ty, ptr);
-            } else {
-                // TODO: adapt so that for callret values are propagated using
-                // PHI nodes.
-                vals[i] = nfn->arg_begin() + fields[i].argidx;
-            }
+            // Need to load
+            llvm::Value* gep = irb.CreateConstGEP1_64(sptr, fields[i].offset);
+            llvm::Type* elem_ty = ret_ty->getElementType(fields[i].retidx);
+            llvm::Value* ptr = irb.CreatePointerCast(gep, elem_ty->getPointerTo(sptr_as));
+            vals[i] = irb.CreateLoad(elem_ty, ptr);
         }
 
         if (auto call = llvm::dyn_cast<llvm::CallInst>(callret)) {
@@ -202,8 +231,6 @@ struct CCState {
             irb.CreateRet(ret_val);
         }
 
-        for (auto* inst : deadinsts)
-            inst->eraseFromParent();
         callret->eraseFromParent();
     }
 };
@@ -278,7 +305,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         assert(false && "unsupported Instrew calling convention!");
     }
 
-    CCState ccs{DL, nfn, sptr, *fieldmap, fields};
+    CCState ccs{DL, nfn, sptr, *fieldmap, fields, call_fn, tail_fn};
 
     // Move basic blocks from one function to another. Because all code is
     // unoptimized at this point, copying (either by CloneFunctionInto or
@@ -329,8 +356,8 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     // Now find all bytes which are still read and written somewhere during
     // the function, and check whether sptr escapes the function.
     bool sptr_escapes = false;
-    SptrFieldSet written_fields;
 
+    llvm::DenseMap<llvm::StoreInst*, unsigned> stores;
     llvm::DenseMap<llvm::Value*, unsigned> visited;
     llvm::SmallVector<llvm::Value*, 16> queue;
     visited[sptr] = 0;
@@ -360,7 +387,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
                     } else {
                         if (tysz != fields[fieldidx - 1].size)
                             goto end_escape;
-                        written_fields.set(fieldidx - 1);
+                        stores[store] = fieldidx - 1;
                     }
                 } else if (inst->getOpcode() == llvm::Instruction::Load) {
                     uint64_t tysz = DL.getTypeAllocSize(inst->getType());
@@ -395,17 +422,12 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     }
 end_escape:
     // If we aborted the loop, the queue is not empty.
-    sptr_escapes = !queue.empty();
+    sptr_escapes = !queue.empty();// || !callret_calls.empty();
 
-    // Check whether we must add necessary stores for all or specific fields.
-    // TODO: If unwritten fields are propagated, this is only necessary on escape
-    if (!callret_calls.empty() || sptr_escapes) {
-        ccs.CreateStores(nullptr);
-        for (auto* call : callret_calls)
-            ccs.CreateStores(call);
-    }
+    // Then, fold known stores.
+    llvm::SmallVector<std::pair<llvm::Instruction*, CCState::FoldedStores>, 20> callret_stores;
+    callret_stores.reserve(callret_calls.size() + 4);
 
-    // Then, fold known stores. There should be at most one returning BB.
     for (llvm::BasicBlock& bb : *nfn) {
         auto* ret = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator());
         if (!ret)
@@ -418,10 +440,83 @@ end_escape:
             continue;
         }
 
-        ccs.FoldStores(ret, !callret_calls.empty() || sptr_escapes, written_fields);
+        callret_stores.push_back(std::make_pair(ret, ccs.FoldStores(ret, stores)));
     }
     for (auto* call : callret_calls)
-        ccs.FoldStores(call, !callret_calls.empty() || sptr_escapes, written_fields);
+        callret_stores.push_back(std::make_pair(call, ccs.FoldStores(call, stores)));
+
+    // By now, all stores should be gone. If there are still stores left,
+    // we know that folding was unsuccessful and we must be conservative.
+    sptr_escapes |= !stores.empty();
+    if (!sptr_escapes) {
+        // There may be cases where some values are not found. If we have no
+        // call/tail calls, we can simply use the arguments. Otherwise we need
+        // to wire PHI nodes through the function.
+        llvm::DenseMap<std::pair<llvm::BasicBlock*, unsigned>, llvm::PHINode*> phimap;
+        llvm::DenseMap<llvm::BasicBlock*, llvm::Instruction*> last_producer;
+        // Producer of the entry block are the function parameters.
+        last_producer[&nfn->getEntryBlock()] = nullptr;
+        for (auto& [callret, vals] : callret_stores) {
+            llvm::BasicBlock* bb = callret->getParent();
+            if (!last_producer.try_emplace(bb, callret).second)
+                assert(false && "multiple producer in single block");
+            llvm::IRBuilder<> irb(bb->getFirstNonPHI());
+            for (unsigned i = 0; i < fields.size(); i++) {
+                if (vals[i])
+                    continue;
+                if (callret_calls.empty()) {
+                    vals[i] = nfn->arg_begin() + fields[i].argidx;
+                } else {
+                    llvm::Type* elem_ty = ret_ty->getElementType(fields[i].retidx);
+                    auto phi = irb.CreatePHI(elem_ty, 2);
+                    vals[i] = phi;
+                    phimap[std::make_pair(bb, i)] = phi;
+                }
+            }
+        }
+
+        llvm::SmallVector<std::pair<unsigned, llvm::PHINode*>, 64> phi_queue;
+        phi_queue.reserve(phimap.size() * 2);
+        for (const auto& [bi, phi] : phimap)
+            phi_queue.push_back(std::make_pair(bi.second, phi));
+        while (!phi_queue.empty()) {
+            auto [fieldidx, phi] = phi_queue[phi_queue.size() - 1];
+            phi_queue.pop_back();
+            auto it = pred_begin(phi->getParent());
+            auto end = pred_end(phi->getParent());
+            for (; it != end; ++it) {
+                llvm::BasicBlock* pred = *it;
+                llvm::IRBuilder<> irb(pred->getTerminator());
+                auto producer = last_producer.find(pred);
+                if (producer != last_producer.end()) {
+                    auto value = ccs.GetValue(fields[fieldidx], producer->second, irb);
+                    phi->addIncoming(value, pred);
+                    continue;
+                }
+                auto parent_phi = phimap.find(std::make_pair(pred, fieldidx));
+                if (parent_phi != phimap.end()) {
+                    phi->addIncoming(parent_phi->second, pred);
+                } else {
+                    irb.SetInsertPoint(pred->getFirstNonPHI());
+                    llvm::Type* elem_ty = ret_ty->getElementType(fields[fieldidx].retidx);
+                    auto nphi = irb.CreatePHI(elem_ty, 2);
+                    phimap[std::make_pair(pred, fieldidx)] = nphi;
+                    phi_queue.push_back(std::make_pair(fieldidx, nphi));
+                    phi->addIncoming(nphi, pred);
+                }
+            }
+        }
+    }
+
+    // Check whether we must add necessary stores for all or specific fields.
+    if (sptr_escapes) {
+        ccs.CreateStores(nullptr);
+        for (auto* call : callret_calls)
+            ccs.CreateStores(call);
+    }
+
+    for (auto& [callret, stores] : callret_stores)
+        ccs.UpdateCallRet(callret, sptr_escapes, stores);
 
     return nfn;
 }
