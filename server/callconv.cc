@@ -176,6 +176,10 @@ struct CCState {
                         vals[i] = GetValue(fields[i], call, irb);
                 break;
             }
+            if (auto load = llvm::dyn_cast<llvm::LoadInst>(&*it)) {
+                if (load->getPointerAddressSpace() == sptr_as)
+                    break;
+            }
             auto store = llvm::dyn_cast<llvm::StoreInst>(&*it);
             if (!store || store->getPointerAddressSpace() != sptr_as)
                 continue;
