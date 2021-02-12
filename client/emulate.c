@@ -4,11 +4,27 @@
 #include <emulate.h>
 
 #include <asm/stat.h>
+#include <linux/sched.h>
 #include <linux/utsname.h>
 
 #include <state.h>
 
 
+#ifdef __aarch64__
+static unsigned
+emulate_openat_flags(unsigned uapi_flags) {
+    unsigned res = uapi_flags & ~00740000;
+    if (uapi_flags & 00040000)
+        res |= O_DIRECT;
+    if (uapi_flags & 00100000)
+        res |= O_LARGEFILE;
+    if (uapi_flags & 00200000)
+        res |= O_DIRECTORY;
+    if (uapi_flags & 00400000)
+        res |= O_NOFOLLOW;
+    return res;
+}
+#endif
 
 void
 emulate_cpuid(uint64_t* cpu_state) {
@@ -128,7 +144,7 @@ emulate_syscall(uint64_t* cpu_state) {
     case 217: nr = __NR_getdents64; goto native;
     case 218: nr = __NR_set_tid_address; goto native;
     case 228: nr = __NR_clock_gettime; goto native;
-    case 257: nr = __NR_openat; goto native;
+    case 257: goto common_openat;
     case 270: nr = __NR_pselect6; goto native;
     case 273: nr = __NR_set_robust_list; goto native;
     case 274: nr = __NR_get_robust_list; goto native;
@@ -138,8 +154,13 @@ emulate_syscall(uint64_t* cpu_state) {
 
     // Some are too old to work on newer platforms, but have replacements.
     case 2: // open
-        res = syscall(__NR_openat, AT_FDCWD, arg0, arg1, arg2, 0, 0);
-        break;
+        arg3 = arg2, arg2 = arg1, arg1 = arg0, arg0 = AT_FDCWD;
+    common_openat:
+#ifdef __aarch64__
+        arg2 = emulate_openat_flags(arg2);
+#endif
+        nr = __NR_openat;
+        goto native;
     case 21: // access
         res = syscall(__NR_faccessat, AT_FDCWD, arg0, arg1, 0, 0, 0);
         break;
@@ -343,7 +364,12 @@ emulate_rv64_syscall(uint64_t* cpu_state) {
     case 49: nr = __NR_chdir; goto native;
     case 52: nr = __NR_fchmod; goto native;
     case 55: nr = __NR_fchown; goto native;
-    case 56: nr = __NR_openat; goto native;
+    case 56:
+        nr = __NR_openat;
+#ifdef __aarch64__
+        arg2 = emulate_openat_flags(arg2);
+#endif
+        goto native;
     case 57: nr = __NR_close; goto native;
     case 59: nr = __NR_pipe2; goto native;
     case 61: nr = __NR_getdents64; goto native;
