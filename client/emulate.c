@@ -26,58 +26,63 @@ emulate_openat_flags(unsigned uapi_flags) {
 }
 #endif
 
-void
-emulate_cpuid(uint64_t* cpu_state) {
-    uint64_t rax = cpu_state[1], rcx = cpu_state[2];
+struct CpuidResult {
+    uint32_t res[4];
+};
+
+struct CpuidResult
+emulate_cpuid(uint32_t rax, uint32_t rcx) {
+    struct CpuidResult res = {0};
     if (rax == 0) {
-        cpu_state[1] = 7; // eax = max input value for basic CPUID
-        cpu_state[2] = 0x6c65746e; // ecx = "ntel"
-        cpu_state[3] = 0x49656e69; // edx = "ineI"
-        cpu_state[4] = 0x756e6547; // ebx = "Genu"
+        res.res[0] = 7; // eax = max input value for basic CPUID
+        res.res[1] = 0x6c65746e; // ecx = "ntel"
+        res.res[2] = 0x49656e69; // edx = "ineI"
+        res.res[3] = 0x756e6547; // ebx = "Genu"
     } else if (rax == 1) { // page 1 (feature information)
-        cpu_state[1] = 0; // eax = <not implemented>
-        cpu_state[2] = 0x00400000; // ecx = movbe
-        cpu_state[3] = 0x07008040; // edx = pae+cmov+fxsr+sse+sse2
-        cpu_state[4] = 0; // ebx = <not implemented>
+        res.res[0] = 0; // eax = <not implemented>
+        res.res[1] = 0x00400000; // ecx = movbe
+        res.res[2] = 0x07008040; // edx = pae+cmov+fxsr+sse+sse2
+        res.res[3] = 0; // ebx = <not implemented>
     } else if (rax == 2) { // page 2 (TLB/cache/prefetch information)
         // TODO: retrieve actual cache information
-        cpu_state[1] = 0x80000001; // eax = reserved (with al=01)
-        cpu_state[2] = 0x80000000; // ecx = reserved
-        cpu_state[3] = 0x80000000; // edx = reserved
-        cpu_state[4] = 0x80000000; // ebx = reserved
+        res.res[0] = 0x80000001; // eax = reserved (with al=01)
+        res.res[1] = 0x80000000; // ecx = reserved
+        res.res[2] = 0x80000000; // edx = reserved
+        res.res[3] = 0x80000000; // ebx = reserved
     } else if (rax == 3) { // page 3 (processor serial number; not supported)
-        cpu_state[1] = 0x00000000; // eax = reserved
-        cpu_state[2] = 0x00000000; // ecx = reserved
-        cpu_state[3] = 0x00000000; // edx = reserved
-        cpu_state[4] = 0x00000000; // ebx = reserved
+        res.res[0] = 0x00000000; // eax = reserved
+        res.res[1] = 0x00000000; // ecx = reserved
+        res.res[2] = 0x00000000; // edx = reserved
+        res.res[3] = 0x00000000; // ebx = reserved
     } else if (rax == 4) { // page 4 (deterministic cache params; not implemented)
-        cpu_state[1] = 0x00000000; // eax = reserved
-        cpu_state[2] = 0x00000000; // ecx = reserved
-        cpu_state[3] = 0x00000000; // edx = reserved
-        cpu_state[4] = 0x00000000; // ebx = reserved
+        res.res[0] = 0x00000000; // eax = reserved
+        res.res[1] = 0x00000000; // ecx = reserved
+        res.res[2] = 0x00000000; // edx = reserved
+        res.res[3] = 0x00000000; // ebx = reserved
     } else if (rax == 5) { // page 5 (monitor/mwait; mot implemented)
-        cpu_state[1] = 0x00000000; // eax = reserved
-        cpu_state[2] = 0x00000000; // ecx = reserved
-        cpu_state[3] = 0x00000000; // edx = reserved
-        cpu_state[4] = 0x00000000; // ebx = reserved
+        res.res[0] = 0x00000000; // eax = reserved
+        res.res[1] = 0x00000000; // ecx = reserved
+        res.res[2] = 0x00000000; // edx = reserved
+        res.res[3] = 0x00000000; // ebx = reserved
     } else if (rax == 6) { // page 6 (thermal and power management; not supported)
-        cpu_state[1] = 0x00000000; // eax = reserved
-        cpu_state[2] = 0x00000000; // ecx = reserved
-        cpu_state[3] = 0x00000000; // edx = reserved
-        cpu_state[4] = 0x00000000; // ebx = reserved
+        res.res[0] = 0x00000000; // eax = reserved
+        res.res[1] = 0x00000000; // ecx = reserved
+        res.res[2] = 0x00000000; // edx = reserved
+        res.res[3] = 0x00000000; // ebx = reserved
     } else { // page 7 (structured extended feature flags)
         if (rcx == 0) {
-            cpu_state[1] = 0; // eax = maximum subleave supported
-            cpu_state[2] = 0x00000000; // ecx = reserved
-            cpu_state[3] = 0x00000000; // edx = reserved
-            cpu_state[4] = 0x00002200; // ebx = erms+deprecate fpu-cs/ds
+            res.res[0] = 0; // eax = maximum subleave supported
+            res.res[1] = 0x00000000; // ecx = reserved
+            res.res[2] = 0x00000000; // edx = reserved
+            res.res[3] = 0x00002200; // ebx = erms+deprecate fpu-cs/ds
         } else {
-            cpu_state[1] = 0x00000000; // eax = reserved
-            cpu_state[2] = 0x00000000; // ecx = reserved
-            cpu_state[3] = 0x00000000; // edx = reserved
-            cpu_state[4] = 0x00000000; // ebx = reserved
+            res.res[0] = 0x00000000; // eax = reserved
+            res.res[1] = 0x00000000; // ecx = reserved
+            res.res[2] = 0x00000000; // edx = reserved
+            res.res[3] = 0x00000000; // ebx = reserved
         }
     }
+    return res;
 }
 
 void

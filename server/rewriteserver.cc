@@ -6,7 +6,6 @@
 #include "instrew-server-config.h"
 #include "optimizer.h"
 
-#include <fadec.h>
 #include <instrew-api.h>
 #include <rellume/rellume.h>
 
@@ -295,13 +294,15 @@ int main(int argc, char** argv) {
         helper_fns.push_back(syscall_fn);
         ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
 
-        auto noop_fn = CreateNoopFn(ctx);
-        lift_fns.push_back(noop_fn);
-        auto cpuid_fn = CreateFunc(ctx, "cpuid");
-        helper_fns.push_back(cpuid_fn);
-        ll_config_set_instr_impl(rlcfg, FDI_CPUID, llvm::wrap(cpuid_fn));
-        ll_config_set_instr_impl(rlcfg, FDI_FLDCW, llvm::wrap(noop_fn));
-        ll_config_set_instr_impl(rlcfg, FDI_LDMXCSR, llvm::wrap(noop_fn));
+        // cpuinfo function is CPUID on x86-64.
+        llvm::Type* i32 = llvm::Type::getInt32Ty(ctx);
+        llvm::Type* i64 = llvm::Type::getInt64Ty(ctx);
+        auto i64_i64 = llvm::StructType::get(i64, i64);
+        auto cpuinfo_fn_ty = llvm::FunctionType::get(i64_i64, {i32, i32}, false);
+        auto linkage = llvm::GlobalValue::ExternalLinkage;
+        auto cpuinfo_fn = llvm::Function::Create(cpuinfo_fn_ty, linkage, "cpuid");
+        helper_fns.push_back(cpuinfo_fn);
+        ll_config_set_cpuinfo_func(rlcfg, llvm::wrap(cpuinfo_fn));
     } else if (server_config.guest_arch == EM_RISCV) {
         ll_config_set_architecture(rlcfg, "rv64");
         if (server_config.cpu == "x86-64" && server_config.hhvm) {
