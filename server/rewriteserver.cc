@@ -15,6 +15,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassTimingInfo.h>
+#include <llvm/Support/CommandLine.h>
 
 #include <chrono>
 #include <cstddef>
@@ -58,7 +59,7 @@ static llvm::Function* CreateFunc(llvm::LLVMContext& ctx,
     fn->setCallingConv(hhvm ? llvm::CallingConv::HHVM : llvm::CallingConv::C);
     fn->addParamAttr(sptr_idx, llvm::Attribute::NoAlias);
     fn->addParamAttr(sptr_idx, llvm::Attribute::NoCapture);
-    fn->addParamAttr(sptr_idx, llvm::Attribute::getWithAlignment(ctx, 16));
+    fn->addParamAttr(sptr_idx, llvm::Attribute::get(ctx, llvm::Attribute::Alignment, 16));
 
     return fn;
 }

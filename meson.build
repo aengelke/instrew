@@ -24,7 +24,7 @@ add_project_arguments(['-Wmissing-field-initializers',
 
 add_global_arguments(['-fno-rtti'], language: 'cpp')
 
-libllvm = dependency('llvm', version: ['>=8', '<10'])
+libllvm = dependency('llvm', version: ['>=8', '<12'])
 
 rellume = subproject('rellume')
 librellume = rellume.get_variable('librellume')

@@ -87,7 +87,7 @@ struct CCState {
     }
 
     llvm::Value* GetValue(const SptrField& field, llvm::Instruction* call,
-                          llvm::IRBuilder<> irb) {
+                          llvm::IRBuilder<>& irb) {
         if (call)
             return irb.CreateExtractValue(call, field.retidx);
         else
@@ -117,10 +117,10 @@ struct CCState {
                 continue;
             irb.SetInsertPoint(load);
             llvm::Value* repl = GetValue(fields[fieldmap[off] - 1], call, irb);
-            if (load->getType() == repl->getType()) {
-                load->replaceAllUsesWith(repl);
-                deadinsts.push_back(load);
-            }
+            if (load->getType() != repl->getType())
+                repl = irb.CreateBitCast(repl, load->getType());
+            load->replaceAllUsesWith(repl);
+            deadinsts.push_back(load);
         }
         for (auto* inst : deadinsts)
             inst->eraseFromParent();
@@ -205,11 +205,14 @@ struct CCState {
         auto ret_ty = llvm::cast<llvm::StructType>(nfn->getReturnType());
         unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
         for (unsigned i = 0; i < fields.size(); i++) {
-            if (vals[i])
+            llvm::Type* elem_ty = ret_ty->getElementType(fields[i].retidx);
+            if (vals[i]) {
+                if (vals[i]->getType() != elem_ty)
+                    vals[i] = irb.CreateBitCast(vals[i], elem_ty);
                 continue;
+            }
             // Need to load
             llvm::Value* gep = irb.CreateConstGEP1_64(sptr, fields[i].offset);
-            llvm::Type* elem_ty = ret_ty->getElementType(fields[i].retidx);
             llvm::Value* ptr = irb.CreatePointerCast(gep, elem_ty->getPointerTo(sptr_as));
             vals[i] = irb.CreateLoad(elem_ty, ptr);
         }

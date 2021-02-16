@@ -1,7 +1,6 @@
 
 #include <instrew-api.h>
 
-#include <llvm/IR/CallSite.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
@@ -50,7 +49,7 @@ public:
         count_ptr = irb.CreatePointerCast(count_ptr, count_ptr_ty);
 
         // We can't remove instructions when iterating, so store call sites.
-        std::vector<llvm::CallSite> call_sites;
+        std::vector<llvm::CallInst*> call_sites;
         call_sites.reserve(instr_marker->getNumUses());
 
         for (llvm::BasicBlock& bb : *fn) {
@@ -78,8 +77,8 @@ public:
         }
 
         // Remove all calls to the instruction marker.
-        for (auto& cs : call_sites)
-            cs.getInstruction()->eraseFromParent();
+        for (auto& ci : call_sites)
+            ci->eraseFromParent();
 
         return fn;
     }
