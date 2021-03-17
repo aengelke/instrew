@@ -118,7 +118,14 @@ void Optimizer::Optimize(llvm::Function* fn) {
     fpm.addPass(llvm::EarlyCSEPass(server_config.opt_pass_pipeline >= 2));
     // fpm.addPass(llvm::NewGVNPass());
     // fpm.addPass(llvm::DSEPass());
-    fpm.addPass(llvm::InstCombinePass(false));
+
+    // This is tricky. For LLVM <=9, the parameter indicates "expensive
+    // combines" -- which is what we want to be false. For LLVM 11+, however,
+    // the parameter suddenly means NumIterations, and if we pass "false",
+    // InstCombine does zero iterations -- which is not what we want. So we go
+    // with the default option, which brings useless "expensive combines" (they
+    // were, thus, removed in later LLVM versions), but makes LLVM 11 work.
+    fpm.addPass(llvm::InstCombinePass());
     fpm.addPass(llvm::CorrelatedValuePropagationPass());
     // if (server_config.opt_pass_pipeline >= 2)
     fpm.addPass(llvm::SimplifyCFGPass());
@@ -127,7 +134,7 @@ void Optimizer::Optimize(llvm::Function* fn) {
     // fpm.addPass(llvm::MergedLoadStoreMotionPass());
     fpm.addPass(llvm::MemCpyOptPass());
     if (server_config.opt_pass_pipeline >= 2)
-        fpm.addPass(llvm::InstCombinePass(false));
+        fpm.addPass(llvm::InstCombinePass());
     // fpm.addPass(llvm::SCCPPass());
     // fpm.addPass(llvm::AAEvaluator());
     fpm.run(*fn, fam);
