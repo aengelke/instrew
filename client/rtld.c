@@ -482,6 +482,7 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
                 goto out;
             break;
         case SHT_NULL:
+        case SHT_NOTE:
         case SHT_PROGBITS:
         case SHT_STRTAB:
         case SHT_X86_64_UNWIND:
