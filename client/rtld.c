@@ -424,7 +424,7 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
     // First pass to check flags and allocate memory, if needed.
     for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
         // We don't support more flags
-        if (elf_shnt->sh_flags & ~(SHF_ALLOC|SHF_EXECINSTR|SHF_MERGE|SHF_MERGE)) {
+        if (elf_shnt->sh_flags & ~(SHF_ALLOC|SHF_EXECINSTR|SHF_MERGE|SHF_STRINGS)) {
             dprintf(2, "unsupported section flags\n");
             return -EINVAL;
         }
