@@ -90,5 +90,15 @@ mem_write_code(void* dst, const void* src, size_t size) {
     if (ret < 0)
         return ret;
     memcpy(dst, src, size);
+
+    // Flush ICache, except for x86-64.
+#if defined(__x86_64__)
+    // Do nothing; x86-64 flushes ICache automatically.
+#elif defined(__aarch64__)
+    for (size_t off = 0; off < size; off += 16)
+        __asm__ volatile("ic ivau, %0" : : "r"((uint8_t*) dst + off));
+#else
+#error "Implement ICache flush for unknown target"
+#endif
     return mprotect(pgstart, pgend - pgstart, PROT_READ|PROT_EXEC);
 }
