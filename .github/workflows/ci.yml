@@ -9,12 +9,8 @@ jobs:
     - uses: actions/checkout@v2
     - name: Init submodules
       run: git submodule update --init --force --recursive
-    - name: Setup Environment
-      run: echo "::add-path::$HOME/.local/bin"
     - name: Install dependencies
-      run: |
-        sudo apt install -y python3-setuptools ninja-build llvm-8-dev
-        pip3 install meson
+      run: sudo apt install -y ninja-build llvm-9-dev meson
     - name: Configure
       run: mkdir build; meson -Dbuildtype=debugoptimized build
     - name: Build
