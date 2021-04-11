@@ -82,6 +82,11 @@ elf_map(uintptr_t addr, Elf_Phdr* elf_ppnt, int fd) {
     uintptr_t mapend = ALIGN_UP(addr + elf_ppnt->p_filesz, pagesz);
     uintptr_t dataend = addr + elf_ppnt->p_filesz;
     uintptr_t allocend = addr + elf_ppnt->p_memsz;
+    // Note: technically, the ALIGN_UP() is not necessary; but some ld versions
+    // generate faulty PT_LOAD entries where zero-ing up to the page end is
+    // assumed.
+    if (prot & PROT_WRITE)
+        allocend = ALIGN_UP(allocend, pagesz);
     uintptr_t mapoff = ALIGN_DOWN(elf_ppnt->p_offset, pagesz);
 
     if ((elf_ppnt->p_vaddr & (pagesz - 1)) != (elf_ppnt->p_offset & (pagesz - 1))) {
