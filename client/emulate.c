@@ -116,6 +116,8 @@ emulate_syscall(uint64_t* cpu_state) {
     case 11: nr = __NR_munmap; goto native; // TODO: catch dangerous maps
     case 12: nr = __NR_brk; goto native; // TODO: catch dangerous maps
     case 16: nr = __NR_ioctl; goto native; // TODO: can something strange happen?
+    case 17: nr = __NR_pread64; goto native;
+    case 18: nr = __NR_pwrite64; goto native;
     case 20: nr = __NR_writev; goto native;
 #ifdef __x86_64__
     case 23: nr = __NR_select; goto native;
