@@ -53,7 +53,7 @@ error:
 #define QUICK_TLB_BITS 10
 #define QUICK_TLB_HASH(addr) (((addr) >> 2) & ((1 << QUICK_TLB_BITS) - 1))
 
-void
+static void
 print_trace(struct State* state, uintptr_t addr) {
     uint64_t* cpu_state = (uint64_t*) state->cpu;
     if (state->config.print_trace) {
@@ -84,10 +84,8 @@ inline void dispatch_cdecl(uint64_t* cpu_state) {
 
     print_trace(state, addr);
 
-    uintptr_t func;
-    if (LIKELY(quick_tlb[hash][0] == addr)) {
-        func = quick_tlb[hash][1];
-    } else {
+    uintptr_t func = quick_tlb[hash][1];
+    if (UNLIKELY(quick_tlb[hash][0] != addr)) {
         func = resolve_func(state, addr);
 
         // Store in TLB
@@ -229,9 +227,11 @@ void dispatch_loop(struct State* state) {
     QTLB_FROM_CPU_STATE(state->cpu) = quick_tlb;
 
     switch (state->tc.tc_callconv) {
-    case 0:
+    case 0: {
+        uint64_t* cpu_state = state->cpu;
         while (true)
-            dispatch_cdecl(state->cpu);
+            dispatch_cdecl(cpu_state);
+    }
 #if defined(__x86_64__)
     case 1:
         dispatch_hhvm(state->cpu);
