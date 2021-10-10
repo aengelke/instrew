@@ -9,11 +9,105 @@
 
 #include <memory.h>
 
+int translator_config_init(struct TranslatorServerConfig* tsc,
+                           const char* server) {
+    tsc->server = server;
+    tsc->sz = 0;
+    return 0;
+}
+
+static int translator_config_write(struct TranslatorServerConfig* tsc,
+                                   size_t len, const void* buf) {
+    if (len >= sizeof(tsc->buf) || tsc->sz + len >= sizeof(tsc->buf))
+        return -ENOSPC;
+    memcpy(tsc->buf + tsc->sz, buf, len);
+    tsc->sz += len;
+    return 0;
+}
+
+static int translator_config_write_bool(struct TranslatorServerConfig* tsc,
+                                        uint8_t id, bool val) {
+    int ret;
+    if ((ret = translator_config_write(tsc, sizeof(id), &id)))
+        return ret;
+    if ((ret = translator_config_write(tsc, sizeof(uint8_t), &val)))
+        return ret;
+    return 0;
+}
+
+static int translator_config_write_int32(struct TranslatorServerConfig* tsc,
+                                         uint8_t id, int32_t val) {
+    int ret;
+    if ((ret = translator_config_write(tsc, sizeof(id), &id)))
+        return ret;
+    if ((ret = translator_config_write(tsc, sizeof(int32_t), &val)))
+        return ret;
+    return 0;
+}
+
+static int translator_config_write_str(struct TranslatorServerConfig* tsc,
+                                       uint8_t id, const char* val) {
+    int ret;
+    if ((ret = translator_config_write(tsc, sizeof(id), &id)))
+        return ret;
+    size_t len64 = strlen(val);
+    if (len64 > INT32_MAX)
+        return -EINVAL;
+    int32_t len32 = len64;
+    if ((ret = translator_config_write(tsc, sizeof(len32), &len32)))
+        return ret;
+    if ((ret = translator_config_write(tsc, len32, val)))
+        return ret;
+    return 0;
+}
+
+#define INSTREW_SERVER_CONF
+#define INSTREW_SERVER_CONF_BOOL(id, name, default) \
+        int translator_config_ ## name(struct TranslatorServerConfig* tsc, bool val) { \
+            return translator_config_write_bool(tsc, id, val); \
+        }
+#define INSTREW_SERVER_CONF_INT32(id, name, default) \
+        int translator_config_ ## name(struct TranslatorServerConfig* tsc, int32_t val) { \
+            return translator_config_write_int32(tsc, id, val); \
+        }
+#define INSTREW_SERVER_CONF_STR(id, name, default) \
+        int translator_config_ ## name(struct TranslatorServerConfig* tsc, const char* val) { \
+            return translator_config_write_str(tsc, id, val); \
+        }
+#include "instrew-protocol.inc"
+#undef INSTREW_SERVER_CONF
+#undef INSTREW_SERVER_CONF_BOOL
+#undef INSTREW_SERVER_CONF_INT32
+#undef INSTREW_SERVER_CONF_STR
+
 enum MsgId {
 #define INSTREW_MESSAGE_ID(id, name) MSGID_ ## name = id,
 #include "instrew-protocol.inc"
 #undef INSTREW_MESSAGE_ID
 };
+
+static int translator_hdr_send(Translator* t, uint32_t id, int32_t sz) {
+    if (t->last_hdr.id != MSGID_UNKNOWN)
+        return -EPROTO;
+    int ret;
+    TranslatorMsgHdr hdr = {id, sz};
+    if ((ret = write_full(t->wr_fd, &hdr, sizeof(hdr))) != sizeof(hdr))
+        return ret;
+    return 0;
+}
+
+static int32_t translator_hdr_recv(Translator* t, uint32_t id) {
+    if (t->last_hdr.id == MSGID_UNKNOWN) {
+        int ret = read_full(t->rd_fd, &t->last_hdr, sizeof(t->last_hdr));
+        if (ret != sizeof(t->last_hdr))
+            return ret;
+    }
+    if (t->last_hdr.id != id)
+        return -EPROTO;
+    int32_t sz = t->last_hdr.sz;
+    t->last_hdr = (TranslatorMsgHdr) {MSGID_UNKNOWN, 0};
+    return sz;
+}
 
 struct spawn_args {
     int pipes[6];
@@ -44,12 +138,12 @@ fail:
     _exit(127);
 }
 
-int translator_init(Translator* t, const char* tool) {
+int translator_init(Translator* t, const struct TranslatorServerConfig* tsc) {
     int ret;
     struct spawn_args args;
     char stack[1024];
 
-    args.tool = tool;
+    args.tool = tsc->server;
 
     ret = pipe2(&args.pipes[0], 0);
     if (ret < 0)
@@ -88,6 +182,7 @@ int translator_init(Translator* t, const char* tool) {
     } else {
         close(args.pipes[0]);
         close(args.pipes[3]);
+        return ret;
     }
 
     t->written_bytes = 0;
@@ -95,7 +190,14 @@ int translator_init(Translator* t, const char* tool) {
     t->recvbuf = NULL;
     t->recvbuf_sz = 0;
 
-    return ret;
+    if ((ret = translator_hdr_send(t, MSGID_C_INIT, -1)))
+        return ret;
+    if ((ret = write_full(t->wr_fd, tsc->buf, tsc->sz)) != (ssize_t) tsc->sz)
+        return ret;
+    if ((ret = write_full(t->wr_fd, "\0", 1)) != 1)
+        return ret;
+
+    return 0;
 }
 
 int translator_fini(Translator* t) {
@@ -103,92 +205,6 @@ int translator_fini(Translator* t) {
     close(t->wr_fd);
     return 0;
 }
-
-static int translator_hdr_send(Translator* t, uint32_t id, int32_t sz) {
-    if (t->last_hdr.id != MSGID_UNKNOWN)
-        return -EPROTO;
-    int ret;
-    TranslatorMsgHdr hdr = {id, sz};
-    if ((ret = write_full(t->wr_fd, &hdr, sizeof(hdr))) != sizeof(hdr))
-        return ret;
-    return 0;
-}
-
-static int32_t translator_hdr_recv(Translator* t, uint32_t id) {
-    if (t->last_hdr.id == MSGID_UNKNOWN) {
-        int ret = read_full(t->rd_fd, &t->last_hdr, sizeof(t->last_hdr));
-        if (ret != sizeof(t->last_hdr))
-            return ret;
-    }
-    if (t->last_hdr.id != id)
-        return -EPROTO;
-    int32_t sz = t->last_hdr.sz;
-    t->last_hdr = (TranslatorMsgHdr) {MSGID_UNKNOWN, 0};
-    return sz;
-}
-
-int translator_config_begin(Translator* t) {
-    return translator_hdr_send(t, MSGID_C_INIT, -1);
-}
-
-int translator_config_end(Translator* t) {
-    int ret;
-    if ((ret = write_full(t->wr_fd, "\0", 1)) != 1)
-        return ret;
-    return 0;
-}
-
-static int translator_config_write_bool(Translator* t, uint8_t id, bool val) {
-    int ret;
-    if ((ret = write_full(t->wr_fd, &id, sizeof(id))) != sizeof(id))
-        return ret;
-    if ((ret = write_full(t->wr_fd, &val, sizeof(uint8_t))) != sizeof(uint8_t))
-        return ret;
-    return 0;
-}
-
-static int translator_config_write_int32(Translator* t, uint8_t id, int32_t val) {
-    int ret;
-    if ((ret = write_full(t->wr_fd, &id, sizeof(id))) != sizeof(id))
-        return ret;
-    if ((ret = write_full(t->wr_fd, &val, sizeof(int32_t))) != sizeof(int32_t))
-        return ret;
-    return 0;
-}
-
-static int translator_config_write_str(Translator* t, uint8_t id, const char* val) {
-    int ret;
-    if ((ret = write_full(t->wr_fd, &id, sizeof(id))) != sizeof(id))
-        return ret;
-    size_t len64 = strlen(val);
-    if (len64 > INT32_MAX)
-        return -EINVAL;
-    int32_t len32 = len64;
-    if ((ret = write_full(t->wr_fd, &len32, sizeof(len32))) != sizeof(len32))
-        return ret;
-    if ((ret = write_full(t->wr_fd, val, len32)) != len32)
-        return ret;
-    return 0;
-}
-
-#define INSTREW_SERVER_CONF
-#define INSTREW_SERVER_CONF_BOOL(id, name, default) \
-        int translator_config_ ## name(Translator* t, bool val) { \
-            return translator_config_write_bool(t, id, val); \
-        }
-#define INSTREW_SERVER_CONF_INT32(id, name, default) \
-        int translator_config_ ## name(Translator* t, int32_t val) { \
-            return translator_config_write_int32(t, id, val); \
-        }
-#define INSTREW_SERVER_CONF_STR(id, name, default) \
-        int translator_config_ ## name(Translator* t, const char* val) { \
-            return translator_config_write_str(t, id, val); \
-        }
-#include "instrew-protocol.inc"
-#undef INSTREW_SERVER_CONF
-#undef INSTREW_SERVER_CONF_BOOL
-#undef INSTREW_SERVER_CONF_INT32
-#undef INSTREW_SERVER_CONF_STR
 
 int translator_config_fetch(Translator* t, struct TranslatorConfig* cfg) {
     int32_t sz = translator_hdr_recv(t, MSGID_S_INIT);

@@ -128,37 +128,40 @@ int main(int argc, char** argv) {
     if (sc_verbose)
         printf("note: using server %s\n", server_path);
 
-    retval = translator_init(&state.translator, server_path);
+    retval = translator_config_init(&state.tsc, server_path);
+    retval |= translator_config_tool(&state.tsc, tool_path);
+    retval |= translator_config_tool_config(&state.tsc, tool_config);
+    retval |= translator_config_opt_pass_pipeline(&state.tsc, sc_opt_level);
+    retval |= translator_config_opt_code_gen(&state.tsc, 3);
+    retval |= translator_config_opt_full_facets(&state.tsc, sc_opt_full_facets);
+    retval |= translator_config_opt_unsafe_callret(&state.tsc, sc_opt_unsafe_callret);
+    retval |= translator_config_opt_callret_lifting(&state.tsc, sc_opt_callret_lifting);
+    retval |= translator_config_opt_new_callconv(&state.tsc, sc_new_callconv);
+    retval |= translator_config_debug_profile_server(&state.tsc, sc_profile_rewriting);
+    retval |= translator_config_debug_dump_ir(&state.tsc, sc_verbose);
+    retval |= translator_config_debug_dump_objects(&state.tsc, sc_d_dump_objects);
+    retval |= translator_config_debug_time_passes(&state.tsc, sc_profile_llvm_passes);
+    retval |= translator_config_guest_arch(&state.tsc, info.machine);
+    retval |= translator_config_hhvm(&state.tsc, sc_hhvm);
+#ifdef __x86_64__
+    retval |= translator_config_triple(&state.tsc, "x86_64-unknown-linux-gnu");
+    retval |= translator_config_cpu(&state.tsc, "x86-64");
+    retval |= translator_config_cpu_features(&state.tsc, "+nopl");
+    retval |= translator_config_native_segments(&state.tsc, true);
+#elif defined(__aarch64__)
+    retval |= translator_config_triple(&state.tsc, "aarch64-unknown-linux-gnu");
+#else
+#error "Unsupported architecture!"
+#endif
+    if (retval != 0) {
+        puts("error: could not setup configuration");
+        return 1;
+    }
+
+    retval = translator_init(&state.translator, &state.tsc);
     if (retval != 0) {
         puts("error: could not spawn rewriting server");
         return retval;
-    }
-
-    retval = translator_config_begin(&state.translator);
-    retval |= translator_config_tool(&state.translator, tool_path);
-    retval |= translator_config_tool_config(&state.translator, tool_config);
-    retval |= translator_config_opt_pass_pipeline(&state.translator, sc_opt_level);
-    retval |= translator_config_opt_code_gen(&state.translator, 3);
-    retval |= translator_config_opt_full_facets(&state.translator, sc_opt_full_facets);
-    retval |= translator_config_opt_unsafe_callret(&state.translator, sc_opt_unsafe_callret);
-    retval |= translator_config_opt_callret_lifting(&state.translator, sc_opt_callret_lifting);
-    retval |= translator_config_opt_new_callconv(&state.translator, sc_new_callconv);
-    retval |= translator_config_debug_profile_server(&state.translator, sc_profile_rewriting);
-    retval |= translator_config_debug_dump_ir(&state.translator, sc_verbose);
-    retval |= translator_config_debug_dump_objects(&state.translator, sc_d_dump_objects);
-    retval |= translator_config_debug_time_passes(&state.translator, sc_profile_llvm_passes);
-    retval |= translator_config_guest_arch(&state.translator, info.machine);
-#ifdef __x86_64__
-    retval |= translator_config_triple(&state.translator, "x86_64-unknown-linux-gnu");
-    retval |= translator_config_cpu(&state.translator, "x86-64");
-    retval |= translator_config_cpu_features(&state.translator, "+nopl");
-    retval |= translator_config_native_segments(&state.translator, true);
-    retval |= translator_config_hhvm(&state.translator, sc_hhvm);
-#endif
-    retval |= translator_config_end(&state.translator);
-    if (retval != 0) {
-        puts("error: could not configure tool");
-        return 1;
     }
 
     retval = translator_config_fetch(&state.translator, &state.tc);

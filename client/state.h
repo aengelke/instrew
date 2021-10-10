@@ -25,6 +25,7 @@ struct State {
         bool profile_rewriting;
     } config;
 
+    struct TranslatorServerConfig tsc;
     struct TranslatorConfig tc;
 };
 
