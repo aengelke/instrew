@@ -551,18 +551,46 @@ snprintf(char* str, size_t size, const char* format, ...)
     return result;
 }
 
+struct DPrintfHelperData {
+    int fd;
+    size_t off;
+    char buf[1024];
+};
+
 static
 void
-dprintf_helper(void* fd, const void* buf, size_t count)
+dprintf_helper(struct DPrintfHelperData* data, const void* buf, size_t count)
 {
-    write((int) (size_t) fd, buf, count);
+    if (count <= sizeof(data->buf) - data->off) {
+        memcpy(data->buf + data->off, buf, count);
+        data->off += count;
+    } else {
+        write(data->fd, data->buf, data->off);
+        if (count <= sizeof(data->buf)) {
+            memcpy(data->buf, buf, count);
+            data->off = count;
+        } else {
+            write(data->fd, buf, count);
+            data->off = 0;
+        }
+    }
 }
 
 int
 vdprintf(int fd, const char* format, va_list args)
 {
-    return printf_driver((PrintfWriteFunc) dprintf_helper, (void*) (size_t) fd,
-                         format, args);
+    // Intentionally leave data.buf unassigned.
+    struct DPrintfHelperData data;
+    data.fd = fd;
+    data.off = 0;
+
+    int result = printf_driver((PrintfWriteFunc) dprintf_helper, &data, format,
+                               args);
+
+    if (data.off)
+        write(data.fd, data.buf, data.off);
+
+    return result;
 }
 
 int
