@@ -14,7 +14,7 @@ floorf(float v) {
     int exp = EXP_F32(vi);
     if (exp < 0) { // less than one
         // < 0 -> -1, else sign(v) * 0
-        return vi < 0 ? -1.0f : vi == 0 ? -0.0f : 0.0f;
+        return vi == INT32_MIN ? -0.0f : vi < 0 ? -1.0f : 0.0f;
     } else if (exp < 23) {
         int32_t msk = 0x7fffff >> exp;
         return I32_AS_F32((vi + (vi < 0 ? msk : 0)) & ~msk);
@@ -29,7 +29,7 @@ floor(double v) {
     int exp = EXP_F64(vi);
     if (exp < 0) { // less than one
         // < 0 -> -1, else sign(v) * 0
-        return vi < 0 ? -1.0 : vi == 0 ? -0.0 : 0.0;
+        return vi == INT64_MIN ? -0.0 : vi < 0 ? -1.0 : 0.0;
     } else if (exp < 52) {
         int64_t msk = 0xfffffffffffff >> exp;
         return I64_AS_F64((vi + (vi < 0 ? msk : 0)) & ~msk);
@@ -74,7 +74,7 @@ roundf(float v) {
     int exp = EXP_F32(vi);
     if (exp < -1) { // less than 0.5
         return I32_AS_F32(vi & 0x80000000);
-    } else if (exp == 0) { // between 0.5 and 1
+    } else if (exp == -1) { // between 0.5 and 1
         return vi < 0 ? -1.0f : 1.0f;
     } else if (exp < 23) {
         int32_t msk = 0x7fffff >> exp;
@@ -92,7 +92,7 @@ round(double v) {
     int exp = EXP_F64(vi);
     if (exp < -1) { // less than 0.5
         return I64_AS_F64(vi & 0x8000000000000000);
-    } else if (exp == 0) { // between 0.5 and 1
+    } else if (exp == -1) { // between 0.5 and 1
         return vi < 0 ? -1.0 : 1.0;
     } else if (exp < 52) {
         int64_t msk = 0xfffffffffffff >> exp;

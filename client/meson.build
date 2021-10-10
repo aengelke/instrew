@@ -31,4 +31,4 @@ executable('instrew', sources,
            link_args: client_link_args,
            install: true)
 
-test('mathlib', executable('test_mathlib', 'math.c', c_args: ['-DTEST']), protocol: 'tap')
+test('mathlib', executable('test_mathlib', 'math.c', c_args: ['-DTEST', '-fno-builtin']), protocol: 'tap')
