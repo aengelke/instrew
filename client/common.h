@@ -77,6 +77,9 @@ int __clone(int (*func)(void *), void *stack, int flags, void *arg, ...);
 
 size_t getpagesize(void) __attribute__((const));
 
+// stdlib.h
+long strtol (const char *nPtr, char **endPtr, int base);
+
 #define STRINGIFY_ARG(x) #x
 #define STRINGIFY(x) STRINGIFY_ARG(x)
 #define STRINGIFY_VA_ARG(...) #__VA_ARGS__
