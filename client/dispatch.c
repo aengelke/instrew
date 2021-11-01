@@ -130,11 +130,6 @@ dispatch_hhvm_resolve: // stack alignment: hhvm
     mov rdi, [r12 - 0x08]; // state
     mov rsi, rbx; // addr
     call resolve_func;
-
-    QUICK_TLB_OFFSET_ASM(rdx, rbx); // Compute quick_tlb hash to rdx
-    add rdx, [r12 - 0x10]; // rdx = quick_tlb entry
-    mov [rdx], rbx; // addr
-    mov [rdx + 8], rax; // func
     mov r14, rax; // return value
     // Restore callee-saved registers.
     pop r11;
