@@ -311,7 +311,7 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
             *((int32_t*) tgt) = prel_syma;
             break;
         case R_X86_64_32S:
-            if (!rtld_elf_signed_range(prel_syma, 32, "R_X86_64_32S"))
+            if (!rtld_elf_signed_range(syma, 32, "R_X86_64_32S"))
                 return -EINVAL;
             *((int32_t*) tgt) = syma;
             break;
