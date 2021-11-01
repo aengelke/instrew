@@ -12,6 +12,26 @@
 // dispatcher on x86-64 below.
 uintptr_t resolve_func(struct State*, uintptr_t);
 
+static void
+print_trace(struct State* state, uintptr_t addr) {
+    uint64_t* cpu_state = (uint64_t*) state->cpu;
+    dprintf(2, "Trace 0x%lx\n", addr);
+    if (state->config.print_regs) {
+        dprintf(2, "RAX=%lx RBX=%lx RCX=%lx RDX=%lx\n", cpu_state[1], cpu_state[4], cpu_state[2], cpu_state[3]);
+        dprintf(2, "RSI=%lx RDI=%lx RBP=%lx RSP=%lx\n", cpu_state[7], cpu_state[8], cpu_state[6], cpu_state[5]);
+        dprintf(2, "R8 =%lx R9 =%lx R10=%lx R11=%lx\n", cpu_state[9], cpu_state[10], cpu_state[11], cpu_state[12]);
+        dprintf(2, "R12=%lx R13=%lx R14=%lx R15=%lx\n", cpu_state[13], cpu_state[14], cpu_state[15], cpu_state[16]);
+        dprintf(2, "RIP=%lx\n", addr);
+        dprintf(2, "XMM0=%lx:%lx XMM1=%lx:%lx\n", cpu_state[18], cpu_state[19], cpu_state[20], cpu_state[21]);
+        dprintf(2, "XMM2=%lx:%lx XMM3=%lx:%lx\n", cpu_state[22], cpu_state[23], cpu_state[24], cpu_state[25]);
+        dprintf(2, "XMM4=%lx:%lx XMM5=%lx:%lx\n", cpu_state[26], cpu_state[27], cpu_state[28], cpu_state[29]);
+        dprintf(2, "XMM6=%lx:%lx XMM7=%lx:%lx\n", cpu_state[30], cpu_state[31], cpu_state[32], cpu_state[33]);
+    }
+}
+
+#define QUICK_TLB_BITS 10
+#define QUICK_TLB_HASH(addr) (((addr) >> 2) & ((1 << QUICK_TLB_BITS) - 1))
+
 uintptr_t
 resolve_func(struct State* state, uintptr_t addr) {
     void* func;
@@ -43,33 +63,23 @@ resolve_func(struct State* state, uintptr_t addr) {
         }
     }
 
+    // If we want a trace, don't update quick TLB. This forces a full resolve on
+    // every dispatch, yielding a complete trace. Tracing is slow anyway, so we
+    // don't care about performance when tracing is active.
+    if (LIKELY(!state->config.print_trace)) {
+        uint64_t(* quick_tlb)[2] = QTLB_FROM_CPU_STATE(state->cpu);
+        uintptr_t hash = QUICK_TLB_HASH(addr);
+        quick_tlb[hash][0] = addr;
+        quick_tlb[hash][1] = (uintptr_t) func;
+    } else {
+        print_trace(state, addr);
+    }
+
     return (uintptr_t) func;
 
 error:
     dprintf(2, "error resolving address %lx: %u\n", addr, -retval);
     _exit(retval);
-}
-
-#define QUICK_TLB_BITS 10
-#define QUICK_TLB_HASH(addr) (((addr) >> 2) & ((1 << QUICK_TLB_BITS) - 1))
-
-static void
-print_trace(struct State* state, uintptr_t addr) {
-    uint64_t* cpu_state = (uint64_t*) state->cpu;
-    if (state->config.print_trace) {
-        dprintf(2, "Trace 0x%lx\n", addr);
-        if (state->config.print_regs) {
-            dprintf(2, "RAX=%lx RBX=%lx RCX=%lx RDX=%lx\n", cpu_state[1], cpu_state[4], cpu_state[2], cpu_state[3]);
-            dprintf(2, "RSI=%lx RDI=%lx RBP=%lx RSP=%lx\n", cpu_state[7], cpu_state[8], cpu_state[6], cpu_state[5]);
-            dprintf(2, "R8 =%lx R9 =%lx R10=%lx R11=%lx\n", cpu_state[9], cpu_state[10], cpu_state[11], cpu_state[12]);
-            dprintf(2, "R12=%lx R13=%lx R14=%lx R15=%lx\n", cpu_state[13], cpu_state[14], cpu_state[15], cpu_state[16]);
-            dprintf(2, "RIP=%lx\n", addr);
-            dprintf(2, "XMM0=%lx:%lx XMM1=%lx:%lx\n", cpu_state[18], cpu_state[19], cpu_state[20], cpu_state[21]);
-            dprintf(2, "XMM2=%lx:%lx XMM3=%lx:%lx\n", cpu_state[22], cpu_state[23], cpu_state[24], cpu_state[25]);
-            dprintf(2, "XMM4=%lx:%lx XMM5=%lx:%lx\n", cpu_state[26], cpu_state[27], cpu_state[28], cpu_state[29]);
-            dprintf(2, "XMM6=%lx:%lx XMM7=%lx:%lx\n", cpu_state[30], cpu_state[31], cpu_state[32], cpu_state[33]);
-        }
-    }
 }
 
 // Used for PLT.
@@ -82,16 +92,9 @@ inline void dispatch_cdecl(uint64_t* cpu_state) {
     uintptr_t addr = cpu_state[0];
     uintptr_t hash = QUICK_TLB_HASH(addr);
 
-    print_trace(state, addr);
-
     uintptr_t func = quick_tlb[hash][1];
-    if (UNLIKELY(quick_tlb[hash][0] != addr)) {
+    if (UNLIKELY(quick_tlb[hash][0] != addr))
         func = resolve_func(state, addr);
-
-        // Store in TLB
-        quick_tlb[hash][0] = addr;
-        quick_tlb[hash][1] = func;
-    }
 
     void(* func_p)(void*);
     *((void**) &func_p) = (void*) func;
