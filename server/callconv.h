@@ -9,6 +9,7 @@ enum class CallConv {
     CDECL,
     HHVM,
     RV64_X86_HHVM,
+    X86_X86_RC,
 };
 
 llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc);

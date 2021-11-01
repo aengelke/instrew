@@ -291,6 +291,9 @@ int main(int argc, char** argv) {
         } else if (server_config.opt_callconv == 2) {
             instrew_cc = CallConv::HHVM;
             client_config.tc_callconv = 1;
+        } else if (server_config.opt_callconv == 3) {
+            instrew_cc = CallConv::X86_X86_RC;
+            client_config.tc_callconv = 2;
         }
         client_config.tc_native_seg_regs = server_config.native_segments;
 

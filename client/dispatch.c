@@ -104,6 +104,7 @@ inline void dispatch_cdecl(uint64_t* cpu_state) {
 #ifdef __x86_64__
 
 __attribute__((noreturn)) extern void dispatch_hhvm(uint64_t* cpu_state);
+__attribute__((noreturn)) extern void dispatch_regcall_loop(uint64_t* cpu_state);
 
 #define QUICK_TLB_OFFSET_ASM(dest_reg, addr_reg) \
         lea dest_reg, [addr_reg * 4]; \
@@ -111,6 +112,102 @@ __attribute__((noreturn)) extern void dispatch_hhvm(uint64_t* cpu_state);
 
 ASM_BLOCK(
     .intel_syntax noprefix;
+
+    .align 16;
+    .global dispatch_regcall;
+    .type dispatch_regcall, @function;
+dispatch_regcall:
+    QUICK_TLB_OFFSET_ASM(r11, rax); // Compute quick_tlb hash to r11
+    add r11, [r12 - 0x10]; // r11 = quick_tlb entry
+    cmp rax, [r11];
+    jne dispatch_regcall_fullresolve;
+    jmp [r11 + 8];
+    .size dispatch_regcall, .-dispatch_regcall;
+
+    .align 16;
+    .type dispatch_regcall_loop, @function;
+dispatch_regcall_loop:
+    push rax;
+    mov r12, rdi; // cpu_state
+    mov rax, [r12]; // addr
+    mov r8, [r12+0x28]; // rsp
+    xor edi, edi; // atexit handler
+    jmp 2f;
+
+    .align 16;
+1:  call [r11 + 8];
+2:  QUICK_TLB_OFFSET_ASM(r11, rax); // Compute quick_tlb hash to r11
+    add r11, [r12 - 0x10]; // r11 = quick_tlb entry
+    cmp rax, [r11];
+    je 1b;
+
+    call dispatch_regcall_fullresolve;
+    xor r11, r11;
+    jmp 2b;
+    .size dispatch_regcall_loop, .-dispatch_regcall_loop;
+
+    .align 16;
+    .type dispatch_regcall_fullresolve, @function;
+dispatch_regcall_fullresolve:
+    // Save all cdecl caller-saved registers.
+    push rax;
+    push rcx;
+    push rdx;
+    push rsi;
+    push rdi;
+    push r8;
+    push r9;
+    push r10;
+    push r11; // for alignment
+    sub rsp, 16 * 16;
+    movaps [rsp + 16*0], xmm0;
+    movaps [rsp + 16*1], xmm1;
+    movaps [rsp + 16*2], xmm2;
+    movaps [rsp + 16*3], xmm3;
+    movaps [rsp + 16*4], xmm4;
+    movaps [rsp + 16*5], xmm5;
+    movaps [rsp + 16*6], xmm6;
+    movaps [rsp + 16*7], xmm7;
+    movaps [rsp + 16*8], xmm8;
+    movaps [rsp + 16*9], xmm9;
+    movaps [rsp + 16*10], xmm10;
+    movaps [rsp + 16*11], xmm11;
+    movaps [rsp + 16*12], xmm12;
+    movaps [rsp + 16*13], xmm13;
+    movaps [rsp + 16*14], xmm14;
+    movaps [rsp + 16*15], xmm15;
+    mov rdi, [r12 - 0x08]; // state
+    mov rsi, rax; // addr
+    call resolve_func;
+    // pop r11;
+    movaps xmm0, [rsp + 16*0];
+    movaps xmm1, [rsp + 16*1];
+    movaps xmm2, [rsp + 16*2];
+    movaps xmm3, [rsp + 16*3];
+    movaps xmm4, [rsp + 16*4];
+    movaps xmm5, [rsp + 16*5];
+    movaps xmm6, [rsp + 16*6];
+    movaps xmm7, [rsp + 16*7];
+    movaps xmm8, [rsp + 16*8];
+    movaps xmm9, [rsp + 16*9];
+    movaps xmm10, [rsp + 16*10];
+    movaps xmm11, [rsp + 16*11];
+    movaps xmm12, [rsp + 16*12];
+    movaps xmm13, [rsp + 16*13];
+    movaps xmm14, [rsp + 16*14];
+    movaps xmm15, [rsp + 16*15];
+    add rsp, 8 + 16*16;
+    mov r11, rax;
+    pop r10;
+    pop r9;
+    pop r8;
+    pop rdi;
+    pop rsi;
+    pop rdx;
+    pop rcx;
+    pop rax;
+    jmp r11;
+    .size dispatch_regcall_fullresolve, .-dispatch_regcall_fullresolve;
 
     // Stores result in r14, preserves all other registers
     .align 16;
@@ -233,6 +330,8 @@ void dispatch_loop(struct State* state) {
 #if defined(__x86_64__)
     case 1:
         dispatch_hhvm(state->cpu);
+    case 2:
+        dispatch_regcall_loop(state->cpu);
 #endif // defined(__x86_64__)
     default:
         puts("error: unsupported calling convention");

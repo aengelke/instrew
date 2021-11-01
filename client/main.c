@@ -88,6 +88,8 @@ int main(int argc, char** argv) {
                 sc_callconv = 1;
             } else if (strcmp(arg + 7, "hhvm") == 0) {
                 sc_callconv = 2;
+            } else if (strcmp(arg + 7, "rc") == 0) {
+                sc_callconv = 3;
             } else {
                 dprintf(2, "unknown calling convention\n");
                 return 1;

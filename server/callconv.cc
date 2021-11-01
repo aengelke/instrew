@@ -58,7 +58,7 @@ struct SptrField {
 };
 
 static constexpr unsigned SPTR_MAX_CNT = 16;
-static constexpr unsigned SPTR_MAX_OFF = 0x100;
+static constexpr unsigned SPTR_MAX_OFF = 0x1a0;
 
 using SptrFieldSet = std::bitset<SPTR_MAX_CNT>;
 using SptrFieldMap = std::array<char, SPTR_MAX_OFF>;
@@ -79,6 +79,7 @@ struct CCState {
     llvm::Argument* sptr;
     const SptrFieldMap& fieldmap;
     span<const SptrField> fields;
+    int sptr_ret_idx;
     llvm::Function* call_fn;
     llvm::Function* tail_fn;
 
@@ -233,6 +234,8 @@ struct CCState {
             call->replaceAllUsesWith(newcall);
         } else {
             llvm::Value* ret_val = llvm::UndefValue::get(ret_ty);
+            if (sptr_ret_idx >= 0)
+                ret_val = irb.CreateInsertValue(ret_val, sptr, {sptr_ret_idx});
             for (unsigned i = 0; i < fields.size(); i++)
                 ret_val = irb.CreateInsertValue(ret_val, vals[i], {fields[i].retidx});
             irb.CreateRet(ret_val);
@@ -252,6 +255,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     llvm::Type* sptr_ty = fn->arg_begin()[0].getType();
     unsigned sptr_as = sptr_ty->getPointerAddressSpace();
     llvm::Type* i64 = llvm::Type::getInt64Ty(ctx);
+    llvm::Type* v2i64 = llvm::VectorType::get(i64, 2);
 
     llvm::Function* call_fn_cdecl = mod->getFunction("instrew_call_cdecl");
     llvm::Function* tail_fn = nullptr;
@@ -263,9 +267,72 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     llvm::FunctionType* fn_ty;
     llvm::Function* nfn;
     llvm::Argument* sptr;
+    int sptr_ret_idx = -1;
     auto linkage = fn->getLinkage();
 
     switch (cc) {
+    case CallConv::X86_X86_RC: {
+        static const SptrField rc_fields[] = {
+            { 0x00,  8,  0,  0  },
+            { 0x08,  8,  1,  1  },
+            { 0x10,  8,  2,  2  },
+            { 0x18,  8,  3,  3  },
+            { 0x20,  8,  4,  4  },
+            { 0x28,  8,  5,  5  },
+            { 0x30,  8,  6,  6  },
+            { 0x38,  8,  8,  8  },
+            { 0x40,  8,  9,  9  },
+            { 0x48,  8,  10, 10 },
+            { 0x0a0, 16, 11, 11 },
+            { 0x0b0, 16, 12, 12 },
+            { 0x0c0, 16, 13, 13 },
+            { 0x0d0, 16, 14, 14 },
+            { 0x0e0, 16, 15, 15 },
+            { 0x0f0, 16, 16, 16 },
+            { 0x100, 16, 17, 17 },
+            { 0x110, 16, 18, 18 },
+            { 0x120, 16, 19, 19 },
+            { 0x130, 16, 20, 20 },
+            { 0x140, 16, 21, 21 },
+            { 0x150, 16, 22, 22 },
+            { 0x160, 16, 23, 23 },
+            { 0x170, 16, 24, 24 },
+            { 0x180, 16, 25, 25 },
+            // Note: while regcallcc allows for 16 XMM parameters/return values,
+            // one must remain available for the register allocator.
+        };
+        static const constexpr SptrFieldMap rc_fieldmap = CreateSptrMap(rc_fields);
+        fields = rc_fields;
+        fieldmap = &rc_fieldmap;
+        ret_ty = llvm::StructType::get(i64, i64, i64, i64, i64, i64, i64,
+                                       sptr_ty, i64, i64, i64,
+                                       v2i64, v2i64, v2i64, v2i64,
+                                       v2i64, v2i64, v2i64, v2i64,
+                                       v2i64, v2i64, v2i64, v2i64,
+                                       v2i64, v2i64, v2i64);
+        fn_ty = llvm::FunctionType::get(ret_ty,
+                {i64, i64, i64, i64, i64, i64, i64, sptr_ty, i64, i64, i64,
+                 v2i64, v2i64, v2i64, v2i64, v2i64, v2i64, v2i64, v2i64,
+                 v2i64, v2i64, v2i64, v2i64, v2i64, v2i64, v2i64}, false);
+    callconv_x86_rc_common:
+
+        nfn = llvm::Function::Create(fn_ty, linkage, fn->getName() + "_rc", mod);
+        nfn->copyAttributesFrom(fn);
+        llvm::AttributeList al = nfn->getAttributes();
+        al = al.addParamAttributes(ctx, 7, al.getParamAttributes(0));
+        nfn->setAttributes(al.removeParamAttributes(ctx, 0));
+        nfn->setCallingConv(llvm::CallingConv::X86_RegCall);
+        sptr = &nfn->arg_begin()[7];
+        sptr_ret_idx = 7;
+
+        if (call_fn_cdecl) {
+            tail_fn = llvm::cast<llvm::Function>(mod->getOrInsertFunction("instrew_dispatch_x86", fn_ty).getCallee());
+            tail_fn->copyAttributesFrom(nfn);
+            tail_fn->setDSOLocal(true);
+            call_fn = tail_fn;
+        }
+        break;
+    }
     case CallConv::HHVM: {
         static const SptrField hhvm_fields[] = {
             { 0x00, 8, 0,  0  },
@@ -334,7 +401,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         assert(false && "unsupported Instrew calling convention!");
     }
 
-    CCState ccs{DL, nfn, sptr, *fieldmap, fields, call_fn, tail_fn};
+    CCState ccs{DL, nfn, sptr, *fieldmap, fields, sptr_ret_idx, call_fn, tail_fn};
 
     // Move basic blocks from one function to another. Because all code is
     // unoptimized at this point, copying (either by CloneFunctionInto or
