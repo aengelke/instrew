@@ -52,10 +52,9 @@ int main(int argc, char** argv) {
     bool sc_opt_callret_lifting = true;
     bool sc_verbose = false;
     bool sc_d_dump_objects = false;
-    bool sc_hhvm = false;
-    bool sc_new_callconv = false;
+    int sc_callconv = 0;
 #ifdef __x86_64__
-    sc_hhvm = true;
+    sc_callconv = 2;
 #endif
 
     while (argc > 1) {
@@ -82,10 +81,17 @@ int main(int argc, char** argv) {
             sc_verbose = true;
         } else if (strcmp(arg, "-ddump-objects") == 0) {
             sc_d_dump_objects = true;
-        } else if (strcmp(arg, "-nohhvm") == 0) {
-            sc_hhvm = false;
-        } else if (strcmp(arg, "-newcc") == 0) {
-            sc_new_callconv = true;
+        } else if (strncmp(arg, "-cconv=", 7) == 0) {
+            if (strcmp(arg + 7, "c") == 0) {
+                sc_callconv = 0;
+            } else if (strcmp(arg + 7, "hhvmrl") == 0) {
+                sc_callconv = 1;
+            } else if (strcmp(arg + 7, "hhvm") == 0) {
+                sc_callconv = 2;
+            } else {
+                dprintf(2, "unknown calling convention\n");
+                return 1;
+            }
         } else if (strcmp(arg, "-nocallret") == 0) {
             sc_opt_callret_lifting = false;
         } else if (strncmp(arg, "-server=", 8) == 0) {
@@ -136,13 +142,12 @@ int main(int argc, char** argv) {
     retval |= translator_config_opt_full_facets(&state.tsc, sc_opt_full_facets);
     retval |= translator_config_opt_unsafe_callret(&state.tsc, sc_opt_unsafe_callret);
     retval |= translator_config_opt_callret_lifting(&state.tsc, sc_opt_callret_lifting);
-    retval |= translator_config_opt_new_callconv(&state.tsc, sc_new_callconv);
     retval |= translator_config_debug_profile_server(&state.tsc, sc_profile_rewriting);
     retval |= translator_config_debug_dump_ir(&state.tsc, sc_verbose);
     retval |= translator_config_debug_dump_objects(&state.tsc, sc_d_dump_objects);
     retval |= translator_config_debug_time_passes(&state.tsc, sc_profile_llvm_passes);
     retval |= translator_config_guest_arch(&state.tsc, info.machine);
-    retval |= translator_config_hhvm(&state.tsc, sc_hhvm);
+    retval |= translator_config_opt_callconv(&state.tsc, sc_callconv);
 #ifdef __x86_64__
     retval |= translator_config_triple(&state.tsc, "x86_64-unknown-linux-gnu");
     retval |= translator_config_cpu(&state.tsc, "x86-64");

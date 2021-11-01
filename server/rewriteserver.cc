@@ -264,8 +264,8 @@ int main(int argc, char** argv) {
     ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
     ll_config_enable_overflow_intrinsics(rlcfg, false);
     if (server_config.opt_callret_lifting) {
-        if (server_config.guest_arch == EM_X86_64 && server_config.hhvm &&
-            !server_config.opt_new_callconv) {
+        if (server_config.guest_arch == EM_X86_64 &&
+            server_config.opt_callconv == 1 /* hhvmrl*/) {
             auto tail_fn = CreateFunc(ctx, "instrew_tail_hhvm", /*hhvm=*/true);
             auto call_fn = CreateFunc(ctx, "instrew_call_hhvm", /*hhvm=*/true);
             helper_fns.push_back(tail_fn);
@@ -282,13 +282,16 @@ int main(int argc, char** argv) {
     if (server_config.guest_arch == EM_X86_64) {
         ll_config_set_architecture(rlcfg, "x86-64");
         ll_config_set_use_native_segment_base(rlcfg, server_config.native_segments);
-        // instrew_cc defaults to CDECL, where functions are not modified. We
-        // currently use this to let Rellume generate HHVMCC functions.
-        if (!server_config.opt_new_callconv)
-            ll_config_set_hhvm(rlcfg, server_config.hhvm);
-        else if (server_config.hhvm)
+        client_config.tc_callconv = 0; // cdecl
+        if (server_config.opt_callconv == 1) {
+            // instrew_cc defaults to CDECL, where functions are not modified. We
+            // currently use this to let Rellume generate HHVMCC functions.
+            ll_config_set_hhvm(rlcfg, true);
+            client_config.tc_callconv = 1;
+        } else if (server_config.opt_callconv == 2) {
             instrew_cc = CallConv::HHVM;
-        client_config.tc_callconv = server_config.hhvm ? 1 : 0;
+            client_config.tc_callconv = 1;
+        }
         client_config.tc_native_seg_regs = server_config.native_segments;
 
         auto syscall_fn = CreateFunc(ctx, "syscall");
@@ -306,7 +309,7 @@ int main(int argc, char** argv) {
         ll_config_set_cpuinfo_func(rlcfg, llvm::wrap(cpuinfo_fn));
     } else if (server_config.guest_arch == EM_RISCV) {
         ll_config_set_architecture(rlcfg, "rv64");
-        if (server_config.cpu == "x86-64" && server_config.hhvm) {
+        if (server_config.cpu == "x86-64" && server_config.opt_callconv == 2) {
             instrew_cc = CallConv::RV64_X86_HHVM;
             client_config.tc_callconv = 1;
         }
