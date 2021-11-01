@@ -463,6 +463,7 @@ emulate_rv64_syscall(uint64_t* cpu_state) {
     case 215: nr = __NR_munmap; goto native;
     case 216: nr = __NR_mremap; goto native;
     case 222: nr = __NR_mmap; goto native;
+    case 226: nr = __NR_mprotect; goto native;
     case 260: nr = __NR_wait4; goto native;
     case 261: nr = __NR_prlimit64; goto native;
     case 276: nr = __NR_renameat2; goto native;
