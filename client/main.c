@@ -202,7 +202,7 @@ int main(int argc, char** argv) {
     // Set auxiliary values
     *(--stack_top) = 0; // Null auxiliary vector entry
 
-    *(--stack_top) = (uintptr_t) info.entry; *(--stack_top) = AT_ENTRY;
+    *(--stack_top) = (uintptr_t) info.elf_entry; *(--stack_top) = AT_ENTRY;
     *(--stack_top) = (uintptr_t) info.phdr; *(--stack_top) = AT_PHDR;
     *(--stack_top) = info.phent; *(--stack_top) = AT_PHENT;
     *(--stack_top) = info.phnum; *(--stack_top) = AT_PHNUM;
@@ -228,7 +228,7 @@ int main(int argc, char** argv) {
 
     // TODO: align stack to 16 bytes
 
-    *((uint64_t*) state.cpu) = (uint64_t) info.entry;
+    *((uint64_t*) state.cpu) = (uint64_t) info.exec_entry;
     if (info.machine == EM_X86_64) {
         *((uint64_t*) state.cpu + 5) = (uint64_t) stack_top;
     } else if (info.machine == EM_RISCV) {

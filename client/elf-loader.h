@@ -13,7 +13,8 @@
 #define Elf_Note Elf64_Note
 
 struct BinaryInfo {
-    void* entry;
+    void* exec_entry;
+    void* elf_entry;
     Elf_Half machine;
     Elf_Phdr* phdr;
     size_t phnum;

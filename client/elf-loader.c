@@ -3,11 +3,21 @@
 #include <elf.h>
 #include <linux/fcntl.h>
 #include <linux/fs.h>
+#include <linux/limits.h>
 #include <linux/mman.h>
 #include <linux/param.h>
 
 #include <elf-loader.h>
 
+
+static int
+elf_read(int fd, size_t off, void* buf, size_t nbytes) {
+    if (lseek(fd, off, SEEK_SET) == -1)
+        return -1;
+    if (read_full(fd, buf, nbytes) == -1)
+        return -1;
+    return 0;
+}
 
 static Elf_Phdr* load_elf_phdrs(Elf_Ehdr* elf_ex, int fd) {
     Elf_Phdr* phdata = NULL;
@@ -30,10 +40,7 @@ static Elf_Phdr* load_elf_phdrs(Elf_Ehdr* elf_ex, int fd) {
         goto out;
     }
 
-    if (lseek(fd, elf_ex->e_phoff, SEEK_SET) == -1)
-        goto out;
-
-    if (read_full(fd, phdata, size) == -1)
+    if (elf_read(fd, elf_ex->e_phoff, phdata, size) == -1)
         goto out;
 
     err = 0;
@@ -47,7 +54,8 @@ out:
     return phdata;
 }
 
-static size_t elf_mapping_size(Elf_Phdr* elf_phdata, size_t num_ph) {
+static uintptr_t
+elf_determine_load_bias(size_t num_ph, const Elf_Phdr elf_phdata[num_ph]) {
     unsigned has_first = 0;
     uintptr_t start = 0;
     uintptr_t end = 0;
@@ -60,7 +68,18 @@ static size_t elf_mapping_size(Elf_Phdr* elf_phdata, size_t num_ph) {
         }
         end = elf_phdata[i].p_vaddr + elf_phdata[i].p_memsz;
     }
-    return end - start;
+    if (start >= end)
+        return (uintptr_t) -ENOEXEC;
+
+    size_t total_size = end - start;
+    void* load_bias_ptr = mmap(NULL, total_size, PROT_NONE,
+                               MAP_PRIVATE|MAP_NORESERVE|MAP_ANONYMOUS,
+                               -1, 0);
+    if (BAD_ADDR(load_bias_ptr))
+        return (uintptr_t) load_bias_ptr;
+    munmap(load_bias_ptr, total_size);
+
+    return (uintptr_t) load_bias_ptr - start;
 }
 
 static int
@@ -148,8 +167,30 @@ out:
     return retval;
 }
 
-// static int
-// load_elf_interp(const char* filename)
+static uintptr_t
+load_elf_interp(const Elf_Ehdr* interp_ehdr, const Elf_Phdr interp_phdata[],
+                int interp_fd) {
+    Elf_Phdr* ppnt;
+    int i;
+
+    uintptr_t load_bias = 0;
+    if (interp_ehdr->e_type == ET_DYN) {
+        load_bias = elf_determine_load_bias(interp_ehdr->e_phnum, interp_phdata);
+        if (BAD_ADDR(load_bias))
+            return load_bias;
+    }
+
+    for (i = 0, ppnt = interp_phdata; i < interp_ehdr->e_phnum; i++, ppnt++) {
+        if (ppnt->p_type != PT_LOAD)
+            continue;
+
+        int retval = elf_map(load_bias + ppnt->p_vaddr, ppnt, interp_fd);
+        if (retval < 0)
+            return retval;
+    }
+
+    return load_bias;
+}
 
 int load_elf_binary(const char* filename, BinaryInfo* out_info) {
     int retval;
@@ -183,49 +224,69 @@ int load_elf_binary(const char* filename, BinaryInfo* out_info) {
         goto out_close;
     }
 
+    int interp_fd = -1;
+    Elf_Ehdr interp_ehdr;
+    Elf_Phdr* interp_phdata = NULL;
     for (i = 0, elf_ppnt = elf_phdata; i < elfhdr_ex.e_phnum; i++, elf_ppnt++) {
-        if (elf_ppnt->p_type == PT_INTERP) {
-            // TODO: Support ELF interpreters
-            puts("INTERP must not be set");
+        if (elf_ppnt->p_type != PT_INTERP)
+            continue;
+        if (elf_ppnt->p_filesz > PATH_MAX || elf_ppnt->p_filesz < 2)
+            goto out_free_ph;
+
+        char interp_name[PATH_MAX];
+        retval = elf_read(fd, elf_ppnt->p_offset, interp_name, elf_ppnt->p_filesz);
+        if (retval < 0)
+            goto out_free_ph;
+        if (interp_name[elf_ppnt->p_filesz] != 0) {
+            retval = -ENOEXEC;
+            goto out_free_ph;
+        }
+
+        interp_fd = open(interp_name, O_RDONLY|O_CLOEXEC, 0);
+        if (interp_fd < 0) {
+            retval = fd;
+            goto out_free_ph;
+        }
+        retval = elf_read(interp_fd, 0, &interp_ehdr, sizeof(Elf_Ehdr));
+        if (retval < 0)
+            goto out_free_ph;
+
+        retval = -ELIBBAD;
+        if (memcmp(&interp_ehdr, ELFMAG, SELFMAG) != 0)
+            goto out_free_ph;
+        if (interp_ehdr.e_ident[EI_CLASS] != ELFCLASS64)
+            goto out_free_ph;
+        if (interp_ehdr.e_type != ET_EXEC && interp_ehdr.e_type != ET_DYN)
+            goto out_free_ph;
+        if (interp_ehdr.e_machine != elfhdr_ex.e_machine)
+            goto out_free_ph;
+
+        interp_phdata = load_elf_phdrs(&interp_ehdr, interp_fd);
+        if (interp_phdata == NULL) {
+            puts("Could not load interp phdata");
+            goto out_free_ph;
+        }
+
+        break;
+    }
+
+    uintptr_t load_bias = 0;
+    if (elfhdr_ex.e_type == ET_DYN) {
+        load_bias = elf_determine_load_bias(elfhdr_ex.e_phnum, elf_phdata);
+        if (BAD_ADDR(load_bias)) {
+            retval = (int) load_bias;
             goto out_free_ph;
         }
     }
 
-    uintptr_t load_addr = 0;
-    unsigned load_addr_set = 0;
-    uintptr_t load_bias = 0;
-
     // TODO: Support GNU_STACK and architecture specific program headers
     // TODO: Support executable stack
 
+    uintptr_t load_addr = 0;
+    unsigned load_addr_set = 0;
     for (i = 0, elf_ppnt = elf_phdata; i < elfhdr_ex.e_phnum; i++, elf_ppnt++) {
         if (elf_ppnt->p_type != PT_LOAD)
             continue;
-
-        if (elfhdr_ex.e_type == ET_DYN && !load_addr_set) {
-            // TODO: handle the case where we have an ELF interpreter.
-            // if (interpreter) {
-            // } else {
-            // Get a memory region that is large enough to hold the whole binary
-            uintptr_t total_size = elf_mapping_size(elf_phdata, elfhdr_ex.e_phnum);
-            if (total_size == 0) {
-                retval = -ENOEXEC;
-                goto out_free_ph;
-            }
-
-            void* load_bias_ptr = mmap(NULL, total_size, PROT_NONE,
-                                       MAP_PRIVATE|MAP_NORESERVE|MAP_ANONYMOUS,
-                                       -1, 0);
-            if (BAD_ADDR(load_bias_ptr)) {
-                retval = (int) (uintptr_t) load_bias_ptr;
-                goto out_free_ph;
-            }
-            munmap(load_bias_ptr, total_size);
-
-            load_bias = (uintptr_t) load_bias_ptr;
-            // }
-            load_bias = ALIGN_DOWN(load_bias - elf_ppnt->p_vaddr, getpagesize());
-        }
 
         if (!load_addr_set) {
             load_addr_set = 1;
@@ -237,8 +298,22 @@ int load_elf_binary(const char* filename, BinaryInfo* out_info) {
             goto out_free_ph;
     }
 
+    uintptr_t elf_entry = load_bias + elfhdr_ex.e_entry;
+    uintptr_t entry = elf_entry;
+
+    if (interp_fd >= 0) {
+        uintptr_t interp_load_bias = load_elf_interp(&interp_ehdr, interp_phdata, interp_fd);
+        if (BAD_ADDR(interp_load_bias)) {
+            retval = interp_load_bias;
+            goto out_free_ph;
+        }
+
+        entry = interp_load_bias + interp_ehdr.e_entry;
+    }
+
     if (out_info != NULL) {
-        out_info->entry = (void*) (load_bias + elfhdr_ex.e_entry);
+        out_info->elf_entry = (void*) elf_entry;
+        out_info->exec_entry = (void*) entry;
         out_info->machine = elfhdr_ex.e_machine;
         out_info->phdr = (Elf_Phdr*) (load_addr + elfhdr_ex.e_phoff);
         out_info->phnum = elfhdr_ex.e_phnum;
@@ -249,9 +324,13 @@ int load_elf_binary(const char* filename, BinaryInfo* out_info) {
 
 out_free_ph:
     munmap(elf_phdata, 0x1000);
+    if (interp_phdata)
+        munmap(interp_phdata, 0x1000);
 
 out_close:
     close(fd);
+    if (interp_fd >= 0)
+        close(interp_fd);
 
 out:
     return retval;
