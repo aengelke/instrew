@@ -41,7 +41,6 @@ off_t lseek(int fd, off_t offset, int whence);
 ssize_t read(int fd, void* buf, size_t count);
 ssize_t write(int fd, const void* buf, size_t count);
 int close(int fd);
-int fcntl(int fd);
 
 ssize_t read_full(int fd, void* buf, size_t nbytes);
 ssize_t write_full(int fd, const void* buf, size_t nbytes);
