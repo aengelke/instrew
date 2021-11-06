@@ -38,12 +38,13 @@ int main(int argc, char** argv) {
     state.cpu = cpu_state_buffer + 0x40;
     state.config.perfmap_fd = -1;
 
-
     STATE_FROM_CPU_STATE(state.cpu) = &state;
 
     const char* server_argv[64] = { INSTREW_DEFAULT_SERVER };
     unsigned server_argc = 1;
     unsigned server_maxargs = sizeof(server_argv) / sizeof(server_argv[0]) - 2;
+
+    bool delay_server = false;
 
     while (argc > 1) {
         --argc;
@@ -67,6 +68,8 @@ int main(int argc, char** argv) {
                     state.config.print_regs = true;
                 } else if (!strcmp(current, "profile")) {
                     state.config.profile_rewriting = true;
+                } else if (!strcmp(current, "delay")) {
+                    delay_server = true;
                 } else {
                     dprintf(2, "ignoring unknown client arg %s\n", current);
                 }
@@ -119,6 +122,10 @@ int main(int argc, char** argv) {
         puts("error: could not spawn rewriting server");
         return retval;
     }
+
+    // Add a short delay to allow attaching a debugger to the server
+    if (delay_server)
+        nanosleep(&(struct timespec) { 1, 0 }, NULL);
 
     retval = translator_config_fetch(&state.translator, &state.tc);
     if (retval != 0) {

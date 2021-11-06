@@ -31,7 +31,9 @@ long syscall(long, long, long, long, long, long, long);
 __attribute__((noreturn)) void _exit(int status);
 int getpid(void);
 
+// time.h
 int clock_gettime(int clk_id, struct timespec* tp);
+int nanosleep(const struct timespec* req, struct timespec* rem);
 
 int open(const char* pathname, int flags, int mode);
 int openat(int dirfd, const char* pathname, int flags, int mode);

@@ -321,6 +321,10 @@ int clock_gettime(int clk_id, struct timespec* tp) {
     return syscall2(__NR_clock_gettime, clk_id, (size_t) tp);
 }
 
+int nanosleep(const struct timespec* req, struct timespec* rem) {
+    return syscall2(__NR_nanosleep, (uintptr_t) req, (uintptr_t) rem);
+}
+
 __attribute__((noreturn))
 void _exit(int status) {
     syscall1(__NR_exit, status);
