@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
     // Create rellume config
     LLConfig* rlcfg = ll_config_new();
     ll_config_enable_verify_ir(rlcfg, false);
-    ll_config_set_call_ret_clobber_flags(rlcfg, instrew_cfg.safecallret);
+    ll_config_set_call_ret_clobber_flags(rlcfg, !instrew_cfg.safecallret);
     ll_config_enable_full_facets(rlcfg, instrew_cfg.fullfacets);
     ll_config_set_position_independent_code(rlcfg, false);
     ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
