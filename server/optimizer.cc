@@ -4,7 +4,6 @@
 #include "config.h"
 
 #include <llvm/IR/IRPrintingPasses.h>
-#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
@@ -26,74 +25,7 @@
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 
 
-Optimizer::Optimizer(InstrewConfig& instrew_cfg)
-        : instrew_cfg(instrew_cfg) {
-    if (instrew_cfg.npm) {
-        legacy_pm = nullptr;
-    } else {
-        unsigned opt_level = instrew_cfg.extrainstcombine ? 3 : 2;
-
-        auto pm = std::make_unique<llvm::legacy::PassManager>();
-        // Start of function pass.
-        // Break up aggregate allocas, using SSAUpdater.
-        // pm->add(llvm::createPrintFunctionPass(llvm::errs()));
-        if (opt_level >= 2)
-            pm->add(llvm::createDeadStoreEliminationPass());  // Delete dead stores
-        // pm->add(llvm::createSROAPass());
-        // pm->add(llvm::createPrintFunctionPass(llvm::errs()));
-        pm->add(llvm::createAggressiveDCEPass());         // Delete dead instructions
-        if (opt_level >= 2)
-            pm->add(llvm::createEarlyCSEPass(true /* Enable mem-ssa. */)); // Catch trivial redundancies
-        else
-            pm->add(llvm::createEarlyCSEPass(false /* Enable mem-ssa. */)); // Catch trivial redundancies
-        // pm->add(llvm::createPrintFunctionPass(llvm::errs()));
-
-        pm->add(llvm::createCorrelatedValuePropagationPass()); // Propagate conditionals
-        // pm->add(llvm::createPrintFunctionPass(llvm::errs()));
-        // if (opt_level >= 2)
-            pm->add(llvm::createCFGSimplificationPass());     // Merge & remove BBs
-        // Combine silly seq's
-        // pm->add(llvm::createPrintFunctionPass(llvm::errs()));
-        pm->add(llvm::createAggressiveInstCombinerPass());
-        // pm->add(llvm::createPrintFunctionPass(llvm::errs()));
-        pm->add(llvm::createInstructionCombiningPass(true /* ExpensiveCombines */));
-        // pm->add(llvm::createPrintFunctionPass(llvm::errs()));
-        pm->add(llvm::createReassociatePass());           // Reassociate expressions
-
-        if (opt_level >= 2)
-            pm->add(llvm::createMergedLoadStoreMotionPass()); // Merge ld/st in diamonds
-        if (opt_level >= 2)
-            pm->add(llvm::createNewGVNPass()); // Remove redundancies
-        pm->add(llvm::createMergedLoadStoreMotionPass()); // Merge ld/st in diamonds
-        pm->add(llvm::createMemCpyOptPass());             // Remove memcpy / form memset
-        pm->add(llvm::createSCCPPass());                  // Constant prop with SCCP
-
-        // // Delete dead bit computations (instcombine runs after to fold away the dead
-        // // computations, and then ADCE will run later to exploit any new DCE
-        // // opportunities that creates).
-        // pm->add(llvm::createBitTrackingDCEPass());        // Delete dead bit computations
-
-        // Run instcombine after redundancy elimination to exploit opportunities
-        // opened up by them.
-        if (opt_level >= 2)
-            pm->add(llvm::createInstructionCombiningPass(true /* ExpensiveCombines */));
-        pm->add(llvm::createCorrelatedValuePropagationPass());
-        if (opt_level >= 2)
-            pm->add(llvm::createDeadStoreEliminationPass());  // Delete dead stores
-
-        // pm->add(llvm::createAggressiveDCEPass());         // Delete dead instructions
-        // pm->add(llvm::createCFGSimplificationPass()); // Merge & remove BBs
-        // pm->add(llvm::createInstructionCombiningPass(true /* ExpensiveCombines */));
-        legacy_pm = std::move(pm);
-    }
-}
-
 void Optimizer::Optimize(llvm::Function* fn) {
-    if (legacy_pm) {
-        legacy_pm->run(*(fn->getParent()));
-        return;
-    }
-
     llvm::PassBuilder pb;
     llvm::FunctionPassManager fpm(false);
 

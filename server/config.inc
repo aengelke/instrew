@@ -1,7 +1,6 @@
 INSTREW_OPT(int, targetopt, 3)
 INSTREW_OPT(int, callconv, 0)
 INSTREW_OPT(std::string, tool, "")
-INSTREW_OPT(bool, npm, true) // new pass manager
 INSTREW_OPT(bool, extrainstcombine, true)
 INSTREW_OPT(bool, dumpobj, false)
 INSTREW_OPT(int, dumpir, false)
