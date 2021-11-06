@@ -41,72 +41,44 @@ int main(int argc, char** argv) {
 
     STATE_FROM_CPU_STATE(state.cpu) = &state;
 
-    const char* server_path = INSTREW_DEFAULT_SERVER;
-    const char* tool_path = "none";
-    const char* tool_config = "";
-    int sc_opt_level = 1;
-    bool sc_profile_rewriting = false;
-    bool sc_profile_llvm_passes = false;
-    bool sc_opt_full_facets = true;
-    bool sc_opt_unsafe_callret = true;
-    bool sc_opt_callret_lifting = true;
-    bool sc_verbose = false;
-    bool sc_d_dump_objects = false;
-    int sc_callconv = 0;
-#ifdef __x86_64__
-    sc_callconv = 2;
-#endif
+    const char* server_argv[64] = { INSTREW_DEFAULT_SERVER };
+    unsigned server_argc = 1;
+    unsigned server_maxargs = sizeof(server_argv) / sizeof(server_argv[0]) - 2;
 
     while (argc > 1) {
         --argc;
         char* arg = *(++argv);
-        if (strcmp(arg, "-perfmap") == 0) {
-            state.config.perfmap_fd = open_perfmap();
-        } else if (strcmp(arg, "-trace") == 0) {
-            state.config.print_trace = true;
-        } else if (strcmp(arg, "-regs") == 0) {
-            state.config.print_regs = true;
-        } else if (strcmp(arg, "-profile") == 0) {
-            sc_profile_rewriting = true;
-            state.config.profile_rewriting = true;
-        } else if (strcmp(arg, "-opt") == 0) {
-            sc_opt_level = 2;
-        } else if (strcmp(arg, "-nofacets") == 0) {
-            sc_opt_full_facets = false;
-        } else if (strcmp(arg, "-safe") == 0) {
-            sc_opt_unsafe_callret = false;
-        } else if (strcmp(arg, "-time-passes") == 0) {
-            sc_profile_llvm_passes = true;
-        } else if (strcmp(arg, "-v") == 0) {
-            sc_verbose = true;
-        } else if (strcmp(arg, "-ddump-objects") == 0) {
-            sc_d_dump_objects = true;
-        } else if (strncmp(arg, "-cconv=", 7) == 0) {
-            if (strcmp(arg + 7, "c") == 0) {
-                sc_callconv = 0;
-            } else if (strcmp(arg + 7, "hhvmrl") == 0) {
-                sc_callconv = 1;
-            } else if (strcmp(arg + 7, "hhvm") == 0) {
-                sc_callconv = 2;
-            } else if (strcmp(arg + 7, "rc") == 0) {
-                sc_callconv = 3;
-            } else {
-                dprintf(2, "unknown calling convention\n");
-                return 1;
-            }
-        } else if (strcmp(arg, "-nocallret") == 0) {
-            sc_opt_callret_lifting = false;
-        } else if (strncmp(arg, "-server=", 8) == 0) {
-            server_path = arg + 8;
-        } else if (strncmp(arg, "-tool=", 6) == 0) {
-            tool_path = arg + 6;
-            char* colon = strchr(tool_path, ':');
-            if (colon != NULL) {
-                *colon = '\0';
-                tool_config = colon + 1;
-            }
-        } else {
+        if (arg[0] != '-' || !strcmp(arg, "--"))
             break;
+
+        if (strncmp(arg, "-C", 2) == 0) {
+            arg += 2;
+            do {
+                char* current = arg;
+                arg = strchr(arg, ',');
+                if (arg)
+                    *arg++ = 0;
+
+                if (!strcmp(current, "perfmap")) {
+                    state.config.perfmap_fd = open_perfmap();
+                } else if (!strcmp(current, "trace")) {
+                    state.config.print_trace = true;
+                } else if (!strcmp(current, "regs")) {
+                    state.config.print_regs = true;
+                } else if (!strcmp(current, "profile")) {
+                    state.config.profile_rewriting = true;
+                } else {
+                    dprintf(2, "ignoring unknown client arg %s\n", current);
+                }
+            } while (arg);
+        } else if (strncmp(arg, "-server=", 8) == 0) {
+            server_argv[0] = arg + 8;
+        } else {
+            if (server_argc >= server_maxargs) {
+                puts("error: too many server arguments");
+                return -ENOSPC;
+            }
+            server_argv[server_argc++] = arg;
         }
     }
 
@@ -128,44 +100,21 @@ int main(int argc, char** argv) {
         return retval;
     }
 
-    if (server_path == NULL) {
+    if (server_argv[0] == NULL) {
         puts("error: no server specified, use -server=<path>");
         return 1;
     }
 
-    if (sc_verbose)
-        printf("note: using server %s\n", server_path);
-
-    retval = translator_config_init(&state.tsc, server_path);
-    retval |= translator_config_tool(&state.tsc, tool_path);
-    retval |= translator_config_tool_config(&state.tsc, tool_config);
-    retval |= translator_config_opt_pass_pipeline(&state.tsc, sc_opt_level);
-    retval |= translator_config_opt_code_gen(&state.tsc, 3);
-    retval |= translator_config_opt_full_facets(&state.tsc, sc_opt_full_facets);
-    retval |= translator_config_opt_unsafe_callret(&state.tsc, sc_opt_unsafe_callret);
-    retval |= translator_config_opt_callret_lifting(&state.tsc, sc_opt_callret_lifting);
-    retval |= translator_config_debug_profile_server(&state.tsc, sc_profile_rewriting);
-    retval |= translator_config_debug_dump_ir(&state.tsc, sc_verbose);
-    retval |= translator_config_debug_dump_objects(&state.tsc, sc_d_dump_objects);
-    retval |= translator_config_debug_time_passes(&state.tsc, sc_profile_llvm_passes);
-    retval |= translator_config_guest_arch(&state.tsc, info.machine);
-    retval |= translator_config_opt_callconv(&state.tsc, sc_callconv);
+    state.tsc.tsc_guest_arch = info.machine;
 #ifdef __x86_64__
-    retval |= translator_config_triple(&state.tsc, "x86_64-unknown-linux-gnu");
-    retval |= translator_config_cpu(&state.tsc, "x86-64");
-    retval |= translator_config_cpu_features(&state.tsc, "+nopl");
-    retval |= translator_config_native_segments(&state.tsc, true);
+    state.tsc.tsc_host_arch = EM_X86_64;
 #elif defined(__aarch64__)
-    retval |= translator_config_triple(&state.tsc, "aarch64-unknown-linux-gnu");
+    state.tsc.tsc_host_arch = EM_AARCH64;
 #else
 #error "Unsupported architecture!"
 #endif
-    if (retval != 0) {
-        puts("error: could not setup configuration");
-        return 1;
-    }
 
-    retval = translator_init(&state.translator, &state.tsc);
+    retval = translator_init(&state.translator, server_argv, &state.tsc);
     if (retval != 0) {
         puts("error: could not spawn rewriting server");
         return retval;

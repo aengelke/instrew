@@ -157,16 +157,16 @@ public:
             dlclose(dl_handle);
     }
 
-    int Init(const ServerConfig& server_config, llvm::Module* mod) {
-        if (server_config.tool == "") {
+    int Init(const InstrewConfig& instrew_cfg, llvm::Module* mod) {
+        if (instrew_cfg.tool == "") {
             std::cerr << "error: no tool specified" << std::endl;
             return -EINVAL;
         }
 
-        std::string tool_lib = server_config.tool;
+        std::string tool_lib = instrew_cfg.tool;
         if (tool_lib.find('/') == std::string::npos) {
             std::stringstream ss;
-            ss << INSTREW_TOOL_PATH << "/tool-" << server_config.tool << ".so";
+            ss << INSTREW_TOOL_PATH << "/tool-" << instrew_cfg.tool << ".so";
             tool_lib = ss.str();
         }
         dl_handle = dlopen(tool_lib.c_str(), RTLD_NOW);
@@ -181,7 +181,7 @@ public:
             return -ELIBBAD;
         }
 
-        tool_handle = tool_func(server_config.tool_config.c_str(),
+        tool_handle = tool_func(instrew_cfg.tool.c_str(),
                                 llvm::wrap(mod), &desc);
         if (desc.magic != 0xAEDB1000) {
             std::cerr << "error: incompatible tool" << std::endl;
@@ -205,11 +205,7 @@ public:
 };
 
 int main(int argc, char** argv) {
-    if (argc > 1) {
-        std::cerr << "usage: " << argv[0] << std::endl;
-        std::cerr << "all configuration is done by the client." << std::endl;
-        return 1;
-    }
+    InstrewConfig instrew_cfg{argc - 1, argv + 1};
 
     // Set stdio to unbuffered
     std::setbuf(stdin, nullptr);
@@ -226,25 +222,24 @@ int main(int argc, char** argv) {
     // TODO: integrate into server_config.
     CallConv instrew_cc = CallConv::CDECL;
 
-    ClientConfig client_config;
-    ServerConfig server_config;
     if (conn.RecvMsg() != Msg::C_INIT) {
         std::cerr << "error: expected C_INIT message" << std::endl;
         return 1;
     }
-    server_config.ReadFromConn(conn);
+    ServerConfig server_config = conn.Read<ServerConfig>();
+    ClientConfig client_config;
 
     RemoteMemory remote_memory(conn);
 
     llvm::cl::ParseEnvironmentOptions(argv[0], "INSTREW_SERVER_LLVM_OPTS");
-    llvm::TimePassesIsEnabled = server_config.debug_time_passes;
+    llvm::TimePassesIsEnabled = instrew_cfg.timepasses;
 
     // Initialize optimizer according to configuration
-    Optimizer optimizer(server_config);
+    Optimizer optimizer(instrew_cfg);
 
     // Create code generator to write code into our buffer
     llvm::SmallVector<char, 4096> obj_buffer;
-    CodeGenerator codegen(server_config, obj_buffer);
+    CodeGenerator codegen(server_config, instrew_cfg, obj_buffer);
 
     // Create module, functions will be deleted after code generation.
     llvm::LLVMContext ctx;
@@ -258,14 +253,14 @@ int main(int argc, char** argv) {
     // Create rellume config
     LLConfig* rlcfg = ll_config_new();
     ll_config_enable_verify_ir(rlcfg, false);
-    ll_config_set_call_ret_clobber_flags(rlcfg, server_config.opt_unsafe_callret);
-    ll_config_enable_full_facets(rlcfg, server_config.opt_full_facets);
+    ll_config_set_call_ret_clobber_flags(rlcfg, instrew_cfg.safecallret);
+    ll_config_enable_full_facets(rlcfg, instrew_cfg.fullfacets);
     ll_config_set_position_independent_code(rlcfg, false);
     ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
     ll_config_enable_overflow_intrinsics(rlcfg, false);
-    if (server_config.opt_callret_lifting) {
-        if (server_config.guest_arch == EM_X86_64 &&
-            server_config.opt_callconv == 1 /* hhvmrl*/) {
+    if (instrew_cfg.callret) {
+        if (server_config.tsc_guest_arch == EM_X86_64 &&
+            instrew_cfg.callconv == 1 /* hhvmrl*/) {
             auto tail_fn = CreateFunc(ctx, "instrew_tail_hhvm", /*hhvm=*/true);
             auto call_fn = CreateFunc(ctx, "instrew_call_hhvm", /*hhvm=*/true);
             helper_fns.push_back(tail_fn);
@@ -279,23 +274,23 @@ int main(int argc, char** argv) {
             ll_config_set_call_func(rlcfg, llvm::wrap(call_fn));
         }
     }
-    if (server_config.guest_arch == EM_X86_64) {
+    if (server_config.tsc_guest_arch == EM_X86_64) {
         ll_config_set_architecture(rlcfg, "x86-64");
-        ll_config_set_use_native_segment_base(rlcfg, server_config.native_segments);
+        ll_config_set_use_native_segment_base(rlcfg, instrew_cfg.nativesegments);
         client_config.tc_callconv = 0; // cdecl
-        if (server_config.opt_callconv == 1) {
+        if (instrew_cfg.callconv == 1) {
             // instrew_cc defaults to CDECL, where functions are not modified. We
             // currently use this to let Rellume generate HHVMCC functions.
             ll_config_set_hhvm(rlcfg, true);
             client_config.tc_callconv = 1;
-        } else if (server_config.opt_callconv == 2) {
+        } else if (instrew_cfg.callconv == 2) {
             instrew_cc = CallConv::HHVM;
             client_config.tc_callconv = 1;
-        } else if (server_config.opt_callconv == 3) {
+        } else if (instrew_cfg.callconv == 3) {
             instrew_cc = CallConv::X86_X86_RC;
             client_config.tc_callconv = 2;
         }
-        client_config.tc_native_seg_regs = server_config.native_segments;
+        client_config.tc_native_seg_regs = instrew_cfg.nativesegments;
 
         auto syscall_fn = CreateFunc(ctx, "syscall");
         helper_fns.push_back(syscall_fn);
@@ -310,9 +305,9 @@ int main(int argc, char** argv) {
         auto cpuinfo_fn = llvm::Function::Create(cpuinfo_fn_ty, linkage, "cpuid");
         helper_fns.push_back(cpuinfo_fn);
         ll_config_set_cpuinfo_func(rlcfg, llvm::wrap(cpuinfo_fn));
-    } else if (server_config.guest_arch == EM_RISCV) {
+    } else if (server_config.tsc_guest_arch == EM_RISCV) {
         ll_config_set_architecture(rlcfg, "rv64");
-        if (server_config.cpu == "x86-64" && server_config.opt_callconv == 2) {
+        if (server_config.tsc_host_arch == EM_X86_64 && instrew_cfg.callconv == 2) {
             instrew_cc = CallConv::RV64_X86_HHVM;
             client_config.tc_callconv = 1;
         }
@@ -344,7 +339,7 @@ int main(int argc, char** argv) {
                 llvm::ConstantArray::get(used_ty, used), "llvm.used");
         llvm_used->setSection("llvm.metadata");
 
-        if (tool.Init(server_config, &init_mod) != 0)
+        if (tool.Init(instrew_cfg, &init_mod) != 0)
             return 1;
         if (tool.MarkInstrs()) {
             lift_fns.push_back(marker_fn);
@@ -404,7 +399,7 @@ int main(int argc, char** argv) {
     while (true) {
         Msg::Id msgid = conn.RecvMsg();
         if (msgid == Msg::C_EXIT) {
-            if (server_config.debug_profile_server) {
+            if (instrew_cfg.profile) {
                 std::cerr << "Server profile: "
                           << std::chrono::duration_cast<std::chrono::milliseconds>(dur_lifting).count()
                           << "ms lifting; "
@@ -416,8 +411,8 @@ int main(int argc, char** argv) {
                           << "ms llvm_codegen"
                           << std::endl;
             }
-            // if (server_config.debug_time_passes)
-            //     llvm::reportAndResetTimings(&llvm::errs());
+            if (instrew_cfg.timepasses)
+                llvm::reportAndResetTimings(&llvm::errs());
             return 0;
         } else if (msgid == Msg::C_TRANSLATE) {
             auto addr = conn.Read<uint64_t>();
@@ -426,7 +421,7 @@ int main(int argc, char** argv) {
             // STEP 1: lift function to LLVM-IR using Rellume.
 
             std::chrono::steady_clock::time_point time_lifting_start;
-            if (server_config.debug_profile_server)
+            if (instrew_cfg.profile)
                 time_lifting_start = std::chrono::steady_clock::now();
 
             for (const auto& lift_fn : lift_fns)
@@ -452,18 +447,18 @@ int main(int argc, char** argv) {
 
             fn->setName(namebuf.str());
 
-            if (server_config.debug_profile_server)
+            if (instrew_cfg.profile)
                 dur_lifting += std::chrono::steady_clock::now() - time_lifting_start;
 
             // Print IR before optimizations
-            if (server_config.debug_dump_ir)
-                fn->print(llvm::errs());
+            if (instrew_cfg.dumpir & 1)
+                mod.print(llvm::errs(), nullptr);
 
             ////////////////////////////////////////////////////////////////////
             // STEP 2: perform instrumentation
 
             std::chrono::steady_clock::time_point time_instrument_start;
-            if (server_config.debug_profile_server)
+            if (instrew_cfg.profile)
                 time_instrument_start = std::chrono::steady_clock::now();
 
             fn = tool.Instrument(fn);
@@ -476,19 +471,19 @@ int main(int argc, char** argv) {
 
             fn = ChangeCallConv(fn, instrew_cc);
 
-            if (server_config.debug_profile_server)
+            if (instrew_cfg.profile)
                 dur_instrument += std::chrono::steady_clock::now() - time_instrument_start;
 
             // Print IR before target-specific transformations
-            if (server_config.debug_dump_ir)
-                fn->print(llvm::errs());
+            if (instrew_cfg.dumpir & 2)
+                mod.print(llvm::errs(), nullptr);
 
             ////////////////////////////////////////////////////////////////////
             // STEP 3: optimize lifted LLVM-IR, optionally using the new pass
             //   manager of LLVM
 
             std::chrono::steady_clock::time_point time_llvm_opt_start;
-            if (server_config.debug_profile_server)
+            if (instrew_cfg.profile)
                 time_llvm_opt_start = std::chrono::steady_clock::now();
 
             // Remove unused helper functions to prevent erasure during opt.
@@ -499,35 +494,36 @@ int main(int argc, char** argv) {
             if (tool.Optimize())
                 optimizer.Optimize(fn);
 
-            if (server_config.debug_profile_server)
+            if (instrew_cfg.profile)
                 dur_llvm_opt += std::chrono::steady_clock::now() - time_llvm_opt_start;
 
             // Print IR before target-specific transformations
-            if (server_config.debug_dump_ir)
-                fn->print(llvm::errs());
+            if (instrew_cfg.dumpir & 4)
+                mod.print(llvm::errs(), nullptr);
 
             ////////////////////////////////////////////////////////////////////
             // STEP 4: generate machine code
 
             std::chrono::steady_clock::time_point time_llvm_codegen_start;
-            if (server_config.debug_profile_server)
+            if (instrew_cfg.profile)
                 time_llvm_codegen_start = std::chrono::steady_clock::now();
 
             codegen.GenerateCode(&mod);
 
-            if (server_config.debug_profile_server)
+            if (instrew_cfg.profile)
                 dur_llvm_codegen += std::chrono::steady_clock::now() - time_llvm_codegen_start;
 
             // Print IR after all optimizations are done
-            if (server_config.debug_dump_ir)
-                fn->print(llvm::errs());
+            if (instrew_cfg.dumpir & 8)
+                mod.print(llvm::errs(), nullptr);
+                // fn->print(llvm::errs());
 
             ////////////////////////////////////////////////////////////////////
             // STEP 5: send object file to the client, and clean-up.
 
             conn.SendMsg(Msg::S_OBJECT, obj_buffer.data(), obj_buffer.size());
 
-            if (server_config.debug_dump_objects) {
+            if (instrew_cfg.dumpobj) {
                 std::stringstream debug_out1_name;
                 debug_out1_name << std::hex << "func_" << addr << ".elf";
 

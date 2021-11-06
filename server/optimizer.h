@@ -9,15 +9,15 @@
 #include <cstdint>
 
 
-struct ServerConfig;
+struct InstrewConfig;
 
 class Optimizer {
 private:
     std::unique_ptr<llvm::legacy::PassManager> legacy_pm;
-    ServerConfig& server_config;
+    InstrewConfig& instrew_cfg;
 
 public:
-    Optimizer(ServerConfig& server_config);
+    Optimizer(InstrewConfig& instrew_cfg);
 
     void Optimize(llvm::Function* fn);
 };

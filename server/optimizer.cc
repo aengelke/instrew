@@ -26,12 +26,12 @@
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 
 
-Optimizer::Optimizer(ServerConfig& server_config)
-        : server_config(server_config) {
-    if (server_config.opt_new_pass_manager) {
+Optimizer::Optimizer(InstrewConfig& instrew_cfg)
+        : instrew_cfg(instrew_cfg) {
+    if (instrew_cfg.npm) {
         legacy_pm = nullptr;
     } else {
-        unsigned opt_level = server_config.opt_pass_pipeline;
+        unsigned opt_level = instrew_cfg.extrainstcombine ? 3 : 2;
 
         auto pm = std::make_unique<llvm::legacy::PassManager>();
         // Start of function pass.
@@ -115,7 +115,7 @@ void Optimizer::Optimize(llvm::Function* fn) {
 
     // fpm.addPass(llvm::ADCEPass());
     fpm.addPass(llvm::DCEPass());
-    fpm.addPass(llvm::EarlyCSEPass(server_config.opt_pass_pipeline >= 2));
+    fpm.addPass(llvm::EarlyCSEPass(instrew_cfg.extrainstcombine));
     // fpm.addPass(llvm::NewGVNPass());
     // fpm.addPass(llvm::DSEPass());
 
@@ -127,13 +127,13 @@ void Optimizer::Optimize(llvm::Function* fn) {
     // were, thus, removed in later LLVM versions), but makes LLVM 11 work.
     fpm.addPass(llvm::InstCombinePass());
     fpm.addPass(llvm::CorrelatedValuePropagationPass());
-    // if (server_config.opt_pass_pipeline >= 2)
+    // if (instrew_cfg.extrainstcombine)
     fpm.addPass(llvm::SimplifyCFGPass());
     // fpm.addPass(llvm::AggressiveInstCombinePass());
     // fpm.addPass(llvm::ReassociatePass());
     // fpm.addPass(llvm::MergedLoadStoreMotionPass());
     fpm.addPass(llvm::MemCpyOptPass());
-    if (server_config.opt_pass_pipeline >= 2)
+    if (instrew_cfg.extrainstcombine)
         fpm.addPass(llvm::InstCombinePass());
     // fpm.addPass(llvm::SCCPPass());
     // fpm.addPass(llvm::AAEvaluator());

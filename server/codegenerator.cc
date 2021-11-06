@@ -13,6 +13,7 @@
 #include <llvm/Target/TargetMachine.h>
 
 #include <cstdlib>
+#include <elf.h>
 #include <iostream>
 
 
@@ -25,7 +26,8 @@ private:
     llvm::legacy::PassManager mc_pass_manager;
 
 public:
-    impl(ServerConfig& server_config, llvm::SmallVectorImpl<char> &o)
+    impl(const ServerConfig& server_config, const InstrewConfig& cfg,
+         llvm::SmallVectorImpl<char> &o)
             : obj_buffer(o), obj_stream(o), mc_ctx(nullptr), mc_pass_manager() {
         llvm::InitializeNativeTarget();
         llvm::InitializeNativeTargetAsmPrinter();
@@ -34,9 +36,18 @@ public:
         llvm::TargetOptions target_options;
         target_options.EnableFastISel = 1; // Use FastISel for CodeGenOpt::None
 
-        std::string triple = server_config.triple;
-        if (triple == "")
-            triple = llvm::sys::getProcessTriple();
+        std::string triple;
+        switch (server_config.tsc_host_arch) {
+        case EM_X86_64:
+            triple = "x86_64-unknown-linux-gnu";
+            break;
+        case EM_AARCH64:
+            triple = "aarch64-unknown-linux-gnu";
+            break;
+        default:
+            std::cerr << "unknown host architecture" << std::endl;
+            abort();
+        }
 
         std::string error;
         const llvm::Target* the_target = llvm::TargetRegistry::lookupTarget(triple, error);
@@ -46,11 +57,11 @@ public:
         }
 
         target = the_target->createTargetMachine(
-            /*TT=*/triple, /*CPU=*/server_config.cpu,
-            /*Features=*/server_config.cpu_features, /*Options=*/target_options,
-            /*RelocModel=*/llvm::Reloc::DynamicNoPIC,
-            /*CodeModel=*/llvm::CodeModel::Small,
-            /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(server_config.opt_code_gen),
+            /*TT=*/triple, /*CPU=*/"",
+            /*Features=*/"", /*Options=*/target_options,
+            /*RelocModel=*/llvm::Reloc::Static,
+            /*CodeModel=*/llvm::CodeModel::Medium,
+            /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(cfg.targetopt),
             /*JIT=*/true
         );
         if (!target) {
@@ -70,7 +81,8 @@ public:
     }
 };
 
-CodeGenerator::CodeGenerator(ServerConfig& sc, llvm::SmallVectorImpl<char>& o)
-        : pimpl{std::make_unique<impl>(sc, o)} {}
+CodeGenerator::CodeGenerator(const ServerConfig& sc, const InstrewConfig& ic,
+                             llvm::SmallVectorImpl<char>& o)
+        : pimpl{std::make_unique<impl>(sc, ic, o)} {}
 CodeGenerator::~CodeGenerator() {}
 void CodeGenerator::GenerateCode(llvm::Module* m) { pimpl->GenerateCode(m); }
