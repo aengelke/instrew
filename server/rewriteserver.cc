@@ -159,8 +159,8 @@ public:
 
     int Init(const InstrewConfig& instrew_cfg, llvm::Module* mod) {
         if (instrew_cfg.tool == "") {
-            std::cerr << "error: no tool specified" << std::endl;
-            return -EINVAL;
+            desc.flags = INSTREW_DESC_OPTIMIZE | INSTREW_DESC_CACHABLE;
+            return 0;
         }
 
         std::string tool_lib = instrew_cfg.tool;
@@ -192,6 +192,8 @@ public:
     }
 
     llvm::Function* Instrument(llvm::Function* fn) {
+        if (!desc.instrument)
+            return fn;
         LLVMValueRef new_fn = desc.instrument(tool_handle, llvm::wrap(fn));
         return llvm::unwrap<llvm::Function>(new_fn);
     }
