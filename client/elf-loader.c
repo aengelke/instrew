@@ -83,7 +83,7 @@ elf_determine_load_bias(size_t num_ph, const Elf_Phdr elf_phdata[num_ph]) {
 }
 
 static int
-elf_map(uintptr_t addr, Elf_Phdr* elf_ppnt, int fd) {
+elf_map(uintptr_t addr, const Elf_Phdr* elf_ppnt, int fd) {
     int retval;
 
     int prot = 0;
@@ -170,7 +170,7 @@ out:
 static uintptr_t
 load_elf_interp(const Elf_Ehdr* interp_ehdr, const Elf_Phdr interp_phdata[],
                 int interp_fd) {
-    Elf_Phdr* ppnt;
+    const Elf_Phdr* ppnt;
     int i;
 
     uintptr_t load_bias = 0;
@@ -197,6 +197,7 @@ int load_elf_binary(const char* filename, BinaryInfo* out_info) {
     int i;
     Elf_Phdr* elf_ppnt;
 
+    int interp_fd = -1;
     int fd = open(filename, O_RDONLY, 0);
     if (fd < 0)     {
         retval = fd;
@@ -224,7 +225,6 @@ int load_elf_binary(const char* filename, BinaryInfo* out_info) {
         goto out_close;
     }
 
-    int interp_fd = -1;
     Elf_Ehdr interp_ehdr;
     Elf_Phdr* interp_phdata = NULL;
     for (i = 0, elf_ppnt = elf_phdata; i < elfhdr_ex.e_phnum; i++, elf_ppnt++) {
