@@ -84,6 +84,18 @@ static llvm::Function* CreateMarkerFn(llvm::LLVMContext& ctx) {
                                   "instrew_instr_marker");
 }
 
+static llvm::GlobalVariable* CreatePcBase(llvm::LLVMContext& ctx) {
+    llvm::Type* i64 = llvm::Type::getInt64Ty(ctx);
+    auto* pc_base_var = new llvm::GlobalVariable(i64, false,
+                                                 llvm::GlobalValue::ExternalLinkage);
+    pc_base_var->setName("instrew_baseaddr");
+    llvm::Constant* lim_val = llvm::ConstantInt::get(i64, -1);
+    llvm::Metadata* lim = llvm::ConstantAsMetadata::get(lim_val);
+    llvm::MDNode* node = llvm::MDNode::get(ctx, {lim, lim});
+    pc_base_var->setMetadata("absolute_symbol", node);
+    return pc_base_var;
+}
+
 class RemoteMemory {
 private:
     const static size_t PAGE_SIZE = 0x1000;
@@ -381,6 +393,9 @@ int main(int argc, char** argv) {
             helper_fn->removeFromParent();
     }
 
+    llvm::GlobalVariable* pc_base_var = CreatePcBase(ctx);
+    llvm::Constant* pc_base = llvm::ConstantExpr::getPtrToInt(pc_base_var,
+                                                   llvm::Type::getInt64Ty(ctx));
     llvm::Module mod("mod", ctx);
     {
         for (const auto& helper_fn : helper_fns)
@@ -388,6 +403,8 @@ int main(int argc, char** argv) {
 
         llvm::Type* i8p_ty = llvm::Type::getInt8PtrTy(ctx);
         llvm::SmallVector<llvm::Constant*, 8> used;
+        used.push_back(pc_base_var);
+        mod.getGlobalList().push_back(pc_base_var);
         for (const auto& helper_fn : helper_fns)
             used.push_back(llvm::ConstantExpr::getPointerCast(helper_fn, i8p_ty));
         llvm::ArrayType* used_ty = llvm::ArrayType::get(i8p_ty, used.size());
@@ -428,6 +445,11 @@ int main(int argc, char** argv) {
 
             for (const auto& lift_fn : lift_fns)
                 mod.getFunctionList().push_back(lift_fn);
+
+            // Optionally generate position-independent code, where the offset
+            // can be adjusted using relocations. For now, this is always zero.
+            if (instrew_cfg.pic)
+                ll_config_set_pc_base(rlcfg, 0, llvm::wrap(pc_base));
 
             LLFunc* rlfn = ll_func_new(llvm::wrap(&mod), rlcfg);
             bool decode_fail = ll_func_decode_cfg(rlfn, addr,

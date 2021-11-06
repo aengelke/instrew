@@ -25,6 +25,7 @@
 
 #define CHECK_SIGNED_BITS(val,bits) \
             ((val) >= -(1ll << (bits-1)) && (val) < (1ll << (bits-1))-1)
+#define CHECK_UNSIGNED_BITS(val,bits) ((val) < (1ull << (bits))-1)
 
 #define RTLD_HASH_BITS 17
 #define RTLD_HASH_MASK ((1 << RTLD_HASH_BITS) - 1)
@@ -198,6 +199,9 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* 
         if (!strncmp(name, "glob_", 5)) {
             dprintf(2, "undefined symbol reference to %s\n", name);
             return -EINVAL;
+        } else if (!strcmp(name, "instrew_baseaddr")) {
+            *out_addr = 0; // TODO!
+            return 0;
         } else {
             // Search through PLT
             for (size_t i = 0; plt_entries[i].name; i++) {
@@ -252,6 +256,15 @@ rtld_elf_add_stub(uintptr_t sym, uintptr_t* out_stub) {
 static bool
 rtld_elf_signed_range(int64_t val, unsigned bits, const char* relinfo) {
     if (!CHECK_SIGNED_BITS(val, bits)) {
+        dprintf(2, "relocation offset out of range (%s): %lx\n", relinfo, val);
+        return false;
+    }
+    return true;
+}
+
+static bool
+rtld_elf_unsigned_range(uint64_t val, unsigned bits, const char* relinfo) {
+    if (!CHECK_UNSIGNED_BITS(val, bits)) {
         dprintf(2, "relocation offset out of range (%s): %lx\n", relinfo, val);
         return false;
     }
@@ -314,6 +327,11 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
             if (!rtld_elf_signed_range(syma, 32, "R_X86_64_32S"))
                 return -EINVAL;
             *((int32_t*) tgt) = syma;
+            break;
+        case R_X86_64_32:
+            if (!rtld_elf_unsigned_range(syma, 32, "R_X86_64_32S"))
+                return -EINVAL;
+            *((uint32_t*) tgt) = syma;
             break;
         case R_X86_64_PC64:
             *((uint64_t*) tgt) = prel_syma;
