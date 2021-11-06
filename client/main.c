@@ -152,8 +152,10 @@ int main(int argc, char** argv) {
     size_t* stack_top = (size_t*) ((uint8_t*) stack + STACK_SIZE);
 
     // Stack alignment
-    if (argc & 1)
-        --stack_top;
+    int envc = 0;
+    while (environ[envc])
+        envc++;
+    stack_top -= (argc + envc) & 1; // auxv has even number of entries
 
     // Set auxiliary values
     *(--stack_top) = 0; // Null auxiliary vector entry
@@ -175,14 +177,14 @@ int main(int argc, char** argv) {
     *(--stack_top) = 0; *(--stack_top) = AT_SECURE;
 
     *(--stack_top) = 0; // End of environment pointers
-    // TODO: environment
+    stack_top -= envc;
+    for (i = 0; i < envc; i++)
+        stack_top[i] = (uintptr_t) environ[i];
     *(--stack_top) = 0; // End of argument pointers
     stack_top -= argc;
     for (i = 0; i < argc; i++)
         stack_top[i] = (size_t) argv[i];
     *(--stack_top) = argc; // Argument Count
-
-    // TODO: align stack to 16 bytes
 
     *((uint64_t*) state.cpu) = (uint64_t) info.exec_entry;
     if (info.machine == EM_X86_64) {
