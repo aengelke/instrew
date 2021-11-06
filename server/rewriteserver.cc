@@ -364,11 +364,6 @@ int main(int argc, char** argv) {
             marker_fn->eraseFromParent();
         }
 
-        // Send client configuration here. It must be sent before the first
-        // object, but only after the tool has been initialized as it might
-        // still want to change some options.
-        conn.SendMsg(Msg::S_INIT, &client_config, sizeof(client_config));
-
         // Rename all tool-defined functions appropriately.
         uint64_t zval_cnt = 1ull << 63;
         for (llvm::Function& fn : init_mod.functions()) {
@@ -379,18 +374,33 @@ int main(int argc, char** argv) {
             fn.setName(llvm::Twine(namebuf.str() + fn.getName()));
         }
 
-        codegen.GenerateCode(&init_mod);
-        conn.SendMsg(Msg::S_OBJECT, obj_buffer.data(), obj_buffer.size());
+        // Send client configuration here. It must be sent before the first
+        // object, but only after the tool has been initialized as it might
+        // still want to change some options.
+        conn.SendMsg(Msg::S_INIT, &client_config, sizeof(client_config));
 
-        for (llvm::Function& fn : init_mod.functions()) {
-            if (!fn.hasExternalLinkage() || fn.empty())
-                continue;
-            fn.deleteBody();
-            helper_fns.push_back(&fn);
+        if (server_config.tsc_server_mode == 0) {
+            // Only do this if this is the "root translator", but not for forks.
+            codegen.GenerateCode(&init_mod);
+            conn.SendMsg(Msg::S_OBJECT, obj_buffer.data(), obj_buffer.size());
+
+            if (instrew_cfg.dumpobj) {
+                std::ofstream debug_out1;
+                debug_out1.open("func_init_mod.elf", std::ios::binary);
+                debug_out1.write(obj_buffer.data(), obj_buffer.size());
+                debug_out1.close();
+            }
+
+            for (llvm::Function& fn : init_mod.functions()) {
+                if (!fn.hasExternalLinkage() || fn.empty())
+                    continue;
+                fn.deleteBody();
+                helper_fns.push_back(&fn);
+            }
+
+            for (const auto& helper_fn : helper_fns)
+                helper_fn->removeFromParent();
         }
-
-        for (const auto& helper_fn : helper_fns)
-            helper_fn->removeFromParent();
     }
 
     llvm::GlobalVariable* pc_base_var = CreatePcBase(ctx);
