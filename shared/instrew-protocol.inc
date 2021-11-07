@@ -20,5 +20,4 @@ INSTREW_SERVER_CONF_INT32(0, server_mode, 0)
 #elif defined(INSTREW_CLIENT_CONF)
 // INSTREW_CLIENT_CONF_*(id, name); defaults to zero.
 INSTREW_CLIENT_CONF_INT32(1, callconv)
-INSTREW_CLIENT_CONF_INT32(2, native_seg_regs)
 #endif

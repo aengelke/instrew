@@ -9,7 +9,6 @@ INSTREW_OPT(bool, timepasses, false)
 INSTREW_OPT(bool, safecallret, false)
 INSTREW_OPT(bool, fullfacets, false)
 INSTREW_OPT(bool, callret, false)
-INSTREW_OPT(bool, nativesegments, false)
 INSTREW_OPT(bool, pic, false)
 
 

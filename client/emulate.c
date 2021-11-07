@@ -270,12 +270,6 @@ emulate_syscall(uint64_t* cpu_state) {
         }
 
     case 158: // arch_prctl
-#ifdef __x86_64__
-        if (state->tc.tc_native_seg_regs) {
-            nr = __NR_arch_prctl;
-            goto native;
-        }
-#endif
         switch (arg0) {
         default:
             res = -EINVAL;

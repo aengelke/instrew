@@ -290,7 +290,6 @@ int main(int argc, char** argv) {
     }
     if (server_config.tsc_guest_arch == EM_X86_64) {
         ll_config_set_architecture(rlcfg, "x86-64");
-        ll_config_set_use_native_segment_base(rlcfg, instrew_cfg.nativesegments);
         client_config.tc_callconv = 0; // cdecl
         if (instrew_cfg.callconv == 1) {
             // instrew_cc defaults to CDECL, where functions are not modified. We
@@ -304,7 +303,6 @@ int main(int argc, char** argv) {
             instrew_cc = CallConv::X86_X86_RC;
             client_config.tc_callconv = 2;
         }
-        client_config.tc_native_seg_regs = instrew_cfg.nativesegments;
 
         auto syscall_fn = CreateFunc(ctx, "syscall");
         helper_fns.push_back(syscall_fn);
