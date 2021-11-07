@@ -86,12 +86,13 @@ emulate_cpuid(uint32_t rax, uint32_t rcx) {
 }
 
 void
-emulate_syscall(uint64_t* cpu_state) {
-    struct State* state = STATE_FROM_CPU_STATE(cpu_state);
+emulate_syscall(uint64_t* cpu_regs) {
+    struct CpuState* cpu_state = CPU_STATE_FROM_REGS(cpu_regs);
+    struct State* state = cpu_state->state;
 
-    uint64_t arg0 = cpu_state[8], arg1 = cpu_state[7], arg2 = cpu_state[3],
-             arg3 = cpu_state[11], arg4 = cpu_state[9], arg5 = cpu_state[10];
-    uint64_t nr = cpu_state[1];
+    uint64_t arg0 = cpu_regs[8], arg1 = cpu_regs[7], arg2 = cpu_regs[3],
+             arg3 = cpu_regs[11], arg4 = cpu_regs[9], arg5 = cpu_regs[10];
+    uint64_t nr = cpu_regs[1];
     ssize_t res = -ENOSYS;
 
     switch (nr) {
@@ -275,11 +276,11 @@ emulate_syscall(uint64_t* cpu_state) {
             res = -EINVAL;
             break;
         case 0x1001: // ARCH_SET_GS
-            cpu_state[19] = arg1;
+            cpu_regs[19] = arg1;
             res = 0;
             break;
         case 0x1002: // ARCH_SET_FS
-            cpu_state[18] = arg1;
+            cpu_regs[18] = arg1;
             res = 0;
             break;
         }
@@ -300,7 +301,7 @@ emulate_syscall(uint64_t* cpu_state) {
                     (uint32_t) state->translator.written_bytes,
                     (uint32_t) (state->rew_time / 1000000));
         }
-        // dprintf(2, "counter value: 0x%lx\n", cpu_state[-2]);
+        // dprintf(2, "counter value: 0x%lx\n", cpu_regs[-2]);
 
         nr = __NR_exit_group;
         goto native;
@@ -321,16 +322,16 @@ end:
     // dprintf(2, "syscall %u (%lx %lx %lx %lx %lx %lx) = 0x%lx(%u)\n",
     //         nr, arg0, arg1, arg2, arg3, arg4, arg5, res, res);
 
-    cpu_state[1] = res;
+    cpu_regs[1] = res;
 }
 
-void emulate_rv64_syscall(uint64_t* cpu_state);
+void emulate_rv64_syscall(uint64_t* cpu_regs);
 
 void
-emulate_rv64_syscall(uint64_t* cpu_state) {
-    uint64_t arg0 = cpu_state[11], arg1 = cpu_state[12], arg2 = cpu_state[13],
-             arg3 = cpu_state[14], arg4 = cpu_state[15], arg5 = cpu_state[16];
-    uint64_t nr = cpu_state[18]; // a7/x17
+emulate_rv64_syscall(uint64_t* cpu_regs) {
+    uint64_t arg0 = cpu_regs[11], arg1 = cpu_regs[12], arg2 = cpu_regs[13],
+             arg3 = cpu_regs[14], arg4 = cpu_regs[15], arg5 = cpu_regs[16];
+    uint64_t nr = cpu_regs[18]; // a7/x17
     ssize_t res = -ENOSYS;
 
     switch (nr) {
@@ -472,5 +473,5 @@ emulate_rv64_syscall(uint64_t* cpu_state) {
         break;
     }
 
-    cpu_state[11] = res;
+    cpu_regs[11] = res;
 }

@@ -3,6 +3,9 @@
 
 #include <dispatch.h>
 
+#include <elf.h>
+
+#include <memory.h>
 #include <rtld.h>
 #include <state.h>
 #include <translator.h>
@@ -10,22 +13,22 @@
 
 // Prototype to make compilers happy. This is used in the assembly HHVM
 // dispatcher on x86-64 below.
-uintptr_t resolve_func(struct State*, uintptr_t);
+uintptr_t resolve_func(struct CpuState*, uintptr_t);
 
 static void
-print_trace(struct State* state, uintptr_t addr) {
-    uint64_t* cpu_state = (uint64_t*) state->cpu;
+print_trace(struct CpuState* cpu_state, uintptr_t addr) {
+    uint64_t* cpu_regs = (uint64_t*) cpu_state->regdata;
     dprintf(2, "Trace 0x%lx\n", addr);
-    if (state->config.print_regs) {
-        dprintf(2, "RAX=%lx RBX=%lx RCX=%lx RDX=%lx\n", cpu_state[1], cpu_state[4], cpu_state[2], cpu_state[3]);
-        dprintf(2, "RSI=%lx RDI=%lx RBP=%lx RSP=%lx\n", cpu_state[7], cpu_state[8], cpu_state[6], cpu_state[5]);
-        dprintf(2, "R8 =%lx R9 =%lx R10=%lx R11=%lx\n", cpu_state[9], cpu_state[10], cpu_state[11], cpu_state[12]);
-        dprintf(2, "R12=%lx R13=%lx R14=%lx R15=%lx\n", cpu_state[13], cpu_state[14], cpu_state[15], cpu_state[16]);
+    if (cpu_state->state->config.print_regs) {
+        dprintf(2, "RAX=%lx RBX=%lx RCX=%lx RDX=%lx\n", cpu_regs[1], cpu_regs[4], cpu_regs[2], cpu_regs[3]);
+        dprintf(2, "RSI=%lx RDI=%lx RBP=%lx RSP=%lx\n", cpu_regs[7], cpu_regs[8], cpu_regs[6], cpu_regs[5]);
+        dprintf(2, "R8 =%lx R9 =%lx R10=%lx R11=%lx\n", cpu_regs[9], cpu_regs[10], cpu_regs[11], cpu_regs[12]);
+        dprintf(2, "R12=%lx R13=%lx R14=%lx R15=%lx\n", cpu_regs[13], cpu_regs[14], cpu_regs[15], cpu_regs[16]);
         dprintf(2, "RIP=%lx\n", addr);
-        dprintf(2, "XMM0=%lx:%lx XMM1=%lx:%lx\n", cpu_state[18], cpu_state[19], cpu_state[20], cpu_state[21]);
-        dprintf(2, "XMM2=%lx:%lx XMM3=%lx:%lx\n", cpu_state[22], cpu_state[23], cpu_state[24], cpu_state[25]);
-        dprintf(2, "XMM4=%lx:%lx XMM5=%lx:%lx\n", cpu_state[26], cpu_state[27], cpu_state[28], cpu_state[29]);
-        dprintf(2, "XMM6=%lx:%lx XMM7=%lx:%lx\n", cpu_state[30], cpu_state[31], cpu_state[32], cpu_state[33]);
+        dprintf(2, "XMM0=%lx:%lx XMM1=%lx:%lx\n", cpu_regs[18], cpu_regs[19], cpu_regs[20], cpu_regs[21]);
+        dprintf(2, "XMM2=%lx:%lx XMM3=%lx:%lx\n", cpu_regs[22], cpu_regs[23], cpu_regs[24], cpu_regs[25]);
+        dprintf(2, "XMM4=%lx:%lx XMM5=%lx:%lx\n", cpu_regs[26], cpu_regs[27], cpu_regs[28], cpu_regs[29]);
+        dprintf(2, "XMM6=%lx:%lx XMM7=%lx:%lx\n", cpu_regs[30], cpu_regs[31], cpu_regs[32], cpu_regs[33]);
     }
 }
 
@@ -33,7 +36,9 @@ print_trace(struct State* state, uintptr_t addr) {
 #define QUICK_TLB_HASH(addr) (((addr) >> 2) & ((1 << QUICK_TLB_BITS) - 1))
 
 uintptr_t
-resolve_func(struct State* state, uintptr_t addr) {
+resolve_func(struct CpuState* cpu_state, uintptr_t addr) {
+    struct State* state = cpu_state->state;
+
     void* func;
     int retval = rtld_resolve(&state->rtld, addr, &func);
     if (UNLIKELY(retval < 0)) {
@@ -67,12 +72,11 @@ resolve_func(struct State* state, uintptr_t addr) {
     // every dispatch, yielding a complete trace. Tracing is slow anyway, so we
     // don't care about performance when tracing is active.
     if (LIKELY(!state->config.print_trace)) {
-        uint64_t(* quick_tlb)[2] = QTLB_FROM_CPU_STATE(state->cpu);
         uintptr_t hash = QUICK_TLB_HASH(addr);
-        quick_tlb[hash][0] = addr;
-        quick_tlb[hash][1] = (uintptr_t) func;
+        cpu_state->quick_tlb[hash][0] = addr;
+        cpu_state->quick_tlb[hash][1] = (uintptr_t) func;
     } else {
-        print_trace(state, addr);
+        print_trace(cpu_state, addr);
     }
 
     return (uintptr_t) func;
@@ -85,20 +89,19 @@ error:
 // Used for PLT.
 void dispatch_cdecl(uint64_t*);
 
-inline void dispatch_cdecl(uint64_t* cpu_state) {
-    struct State* state = STATE_FROM_CPU_STATE(cpu_state);
-    uint64_t(* quick_tlb)[2] = QTLB_FROM_CPU_STATE(cpu_state);
+inline void dispatch_cdecl(uint64_t* cpu_regs) {
+    struct CpuState* cpu_state = CPU_STATE_FROM_REGS(cpu_regs);
 
-    uintptr_t addr = cpu_state[0];
+    uintptr_t addr = cpu_regs[0];
     uintptr_t hash = QUICK_TLB_HASH(addr);
 
-    uintptr_t func = quick_tlb[hash][1];
-    if (UNLIKELY(quick_tlb[hash][0] != addr))
-        func = resolve_func(state, addr);
+    uintptr_t func = cpu_state->quick_tlb[hash][1];
+    if (UNLIKELY(cpu_state->quick_tlb[hash][0] != addr))
+        func = resolve_func(cpu_state, addr);
 
     void(* func_p)(void*);
     *((void**) &func_p) = (void*) func;
-    func_p(cpu_state);
+    func_p(cpu_regs);
 }
 
 #ifdef __x86_64__
@@ -117,11 +120,11 @@ ASM_BLOCK(
     .global dispatch_regcall;
     .type dispatch_regcall, @function;
 dispatch_regcall:
-    QUICK_TLB_OFFSET_ASM(r11, rax); // Compute quick_tlb hash to r11
-    add r11, [r12 - 0x10]; // r11 = quick_tlb entry
-    cmp rax, [r11];
+    mov r11, rax;
+    and r11, ((1 << QUICK_TLB_BITS) - 1) << 2;
+    cmp rax, [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     jne dispatch_regcall_fullresolve;
-    jmp [r11 + 8];
+    jmp [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
     .size dispatch_regcall, .-dispatch_regcall;
 
     .align 16;
@@ -135,10 +138,10 @@ dispatch_regcall_loop:
     jmp 2f;
 
     .align 16;
-1:  call [r11 + 8];
-2:  QUICK_TLB_OFFSET_ASM(r11, rax); // Compute quick_tlb hash to r11
-    add r11, [r12 - 0x10]; // r11 = quick_tlb entry
-    cmp rax, [r11];
+1:  call [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
+2:  mov r11, rax;
+    and r11, ((1 << QUICK_TLB_BITS) - 1) << 2;
+    cmp rax, [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     je 1b;
 
     call dispatch_regcall_fullresolve;
@@ -176,7 +179,7 @@ dispatch_regcall_fullresolve:
     movaps [rsp + 16*13], xmm13;
     movaps [rsp + 16*14], xmm14;
     movaps [rsp + 16*15], xmm15;
-    mov rdi, [r12 - 0x08]; // state
+    mov rdi, [r12 - CPU_STATE_REGDATA_OFFSET]; // cpu_state
     mov rsi, rax; // addr
     call resolve_func;
     // pop r11;
@@ -224,7 +227,7 @@ dispatch_hhvm_resolve: // stack alignment: hhvm
     push r9;
     push r10;
     push r11;
-    mov rdi, [r12 - 0x08]; // state
+    mov rdi, [r12 - CPU_STATE_REGDATA_OFFSET]; // cpu_state
     mov rsi, rbx; // addr
     call resolve_func;
     mov r14, rax; // return value
@@ -246,11 +249,11 @@ dispatch_hhvm_resolve: // stack alignment: hhvm
     .global dispatch_hhvm_tail;
     .type dispatch_hhvm_tail, @function;
 dispatch_hhvm_tail: // stack alignment: cdecl
-    QUICK_TLB_OFFSET_ASM(r14, rbx); // Compute quick_tlb hash to r14
-    add r14, [r12 - 0x10]; // r14 = quick_tlb entry
-    cmp rbx, [r14];
+    mov r14, rbx;
+    and r14, ((1 << QUICK_TLB_BITS) - 1) << 2;
+    cmp rbx, [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     jne 1f;
-    jmp [r14 + 8];
+    jmp [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
     .align 16;
 1:  push rax; // for stack alignment
     call dispatch_hhvm_resolve;
@@ -262,11 +265,11 @@ dispatch_hhvm_tail: // stack alignment: cdecl
     .global dispatch_hhvm_call;
     .type dispatch_hhvm_call, @function;
 dispatch_hhvm_call: // stack alignment: hhvm
-    QUICK_TLB_OFFSET_ASM(r14, rbx); // Compute quick_tlb hash to r14
-    add r14, [r12 - 0x10]; // r14 = quick_tlb entry
-    cmp rbx, [r14];
+    mov r14, rbx;
+    and r14, ((1 << QUICK_TLB_BITS) - 1) << 2;
+    cmp rbx, [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     jne 1f;
-    call [r14 + 8];
+    call [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
     ret;
     .align 16;
 1:  call dispatch_hhvm_resolve;
@@ -278,7 +281,7 @@ dispatch_hhvm_call: // stack alignment: hhvm
     .global dispatch_hhvm;
     .type dispatch_hhvm, @function;
 dispatch_hhvm:
-    mov r12, rdi; // cpu_state
+    mov r12, rdi; // cpu_regs
     // Load HHVM registers
     mov rbx, [r12 + 0 * 8];
     mov rax, [r12 + 1 * 8];
@@ -298,10 +301,10 @@ dispatch_hhvm:
 
     .align 16;
     // This is the quick_tlb hot loop.
-2:  call [r14 + 8];
-3:  QUICK_TLB_OFFSET_ASM(r14, rbx); // Compute quick_tlb hash to r14
-    add r14, [r12 - 0x10]; // r14 = quick_tlb entry
-    cmp rbx, [r14];
+2:  call [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
+3:  mov r14, rbx;
+    and r14, ((1 << QUICK_TLB_BITS) - 1) << 2;
+    cmp rbx, [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     je 2b;
 
     // This code isn't exactly cold, but should be executed not that often.
@@ -316,25 +319,41 @@ dispatch_hhvm:
 
 #endif // defined(__x86_64__)
 
-__attribute__((noreturn))
-void dispatch_loop(struct State* state) {
-    uint64_t quick_tlb[1 << QUICK_TLB_BITS][2] = {0};
-    QTLB_FROM_CPU_STATE(state->cpu) = quick_tlb;
+int
+dispatch_loop(struct State* state, uintptr_t ip, uintptr_t sp) {
+    struct CpuState* cpu_state = mem_alloc_data(sizeof(struct CpuState),
+                                                _Alignof(struct CpuState));
+    // TODO: check for BAD_ADDR(cpu_state)
+    memset(cpu_state, 0, sizeof(*cpu_state));
+    cpu_state->self = cpu_state;
+    cpu_state->state = state;
+
+    uint64_t* cpu_regs = (uint64_t*) &cpu_state->regdata;
+
+    cpu_regs[0] = ip;
+    if (state->tsc.tsc_guest_arch == EM_X86_64) {
+        cpu_regs[5] = sp;
+    } else if (state->tsc.tsc_guest_arch == EM_RISCV) {
+        cpu_regs[3] = sp;
+    } else {
+        // well... -.-
+        puts("error: unsupported architecture");
+        return -ENOEXEC;
+    }
 
     switch (state->tc.tc_callconv) {
     case 0: {
-        uint64_t* cpu_state = state->cpu;
         while (true)
-            dispatch_cdecl(cpu_state);
+            dispatch_cdecl(cpu_regs);
     }
 #if defined(__x86_64__)
     case 1:
-        dispatch_hhvm(state->cpu);
+        dispatch_hhvm(cpu_regs);
     case 2:
-        dispatch_regcall_loop(state->cpu);
+        dispatch_regcall_loop(cpu_regs);
 #endif // defined(__x86_64__)
     default:
         puts("error: unsupported calling convention");
-        _exit(-EOPNOTSUPP);
+        return -EOPNOTSUPP;
     }
 }

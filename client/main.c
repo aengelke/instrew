@@ -31,14 +31,9 @@ int main(int argc, char** argv) {
 
     BinaryInfo info = {0};
 
-    uint8_t cpu_state_buffer[0x40 + 0x400] __attribute__((aligned(64))) = {0};
-
     // Initialize state.
     struct State state = {0};
-    state.cpu = cpu_state_buffer + 0x40;
     state.config.perfmap_fd = -1;
-
-    STATE_FROM_CPU_STATE(state.cpu) = &state;
 
     const char* server_argv[64] = { INSTREW_DEFAULT_SERVER };
     unsigned server_argc = 1;
@@ -186,16 +181,6 @@ int main(int argc, char** argv) {
         stack_top[i] = (size_t) argv[i];
     *(--stack_top) = argc; // Argument Count
 
-    *((uint64_t*) state.cpu) = (uint64_t) info.exec_entry;
-    if (info.machine == EM_X86_64) {
-        *((uint64_t*) state.cpu + 5) = (uint64_t) stack_top;
-    } else if (info.machine == EM_RISCV) {
-        *((uint64_t*) state.cpu + 3) = (uint64_t) stack_top;
-    } else {
-        puts("error: unsupported architecture");
-        return -ENOEXEC;
-    }
-
     retval = rtld_init(&state.rtld, state.config.perfmap_fd);
     if (retval < 0) {
         puts("error: could not initialize runtime linker");
@@ -215,7 +200,8 @@ int main(int argc, char** argv) {
         return retval;
     }
 
-    dispatch_loop(&state);
+    retval = dispatch_loop(&state, (uintptr_t) info.exec_entry,
+                           (uintptr_t) stack_top);
 
 out:
     return retval;

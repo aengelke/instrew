@@ -7,12 +7,6 @@
 #include <translator.h>
 
 struct State {
-    /// Points to the CPU state. There are additional 64 bytes available
-    /// immediately *before* this address. The *last* 8 bytes are used
-    /// internally to store a reference to this State structure. The other 56
-    /// bytes can be used freely by instrumentation tools.
-    void* cpu;
-
     Rtld rtld;
     Translator translator;
 
@@ -29,7 +23,27 @@ struct State {
     struct TranslatorConfig tc;
 };
 
-#define STATE_FROM_CPU_STATE(cpu_state) (*((struct State**) (cpu_state) - 1))
-#define QTLB_FROM_CPU_STATE(cpu_state) (*((uint64_t (**)[2]) (cpu_state) - 2))
+#define QUICK_TLB_BITS 10
+
+struct CpuState {
+    struct CpuState* self;
+    struct State* state;
+    uintptr_t _unused[6];
+
+    _Alignas(64) uint8_t regdata[0x400];
+
+    _Alignas(64) uint64_t quick_tlb[1 << QUICK_TLB_BITS][2];
+};
+
+#define CPU_STATE_REGDATA_OFFSET 0x40
+_Static_assert(offsetof(struct CpuState, regdata) == CPU_STATE_REGDATA_OFFSET,
+               "CPU_STATE_REGDATA_OFFSET mismatch");
+
+#define CPU_STATE_QTLB_OFFSET 0x440
+_Static_assert(offsetof(struct CpuState, quick_tlb) == CPU_STATE_QTLB_OFFSET,
+               "CPU_STATE_QTLB_OFFSET mismatch");
+
+#define CPU_STATE_FROM_REGS(regdata) ((struct CpuState*) \
+                                   ((char*) regdata - CPU_STATE_REGDATA_OFFSET))
 
 #endif
