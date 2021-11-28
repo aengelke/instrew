@@ -5,6 +5,7 @@
 
 #include <elf.h>
 
+#include <dispatcher-info.h>
 #include <memory.h>
 #include <rtld.h>
 #include <state.h>
@@ -109,10 +110,18 @@ inline void dispatch_cdecl(uint64_t* cpu_regs) {
     func_p(cpu_regs);
 }
 
+static void
+dispatch_cdecl_loop(uint64_t* cpu_regs) {
+    while (true)
+        dispatch_cdecl(cpu_regs);
+}
+
 #ifdef __x86_64__
 
 __attribute__((noreturn)) extern void dispatch_hhvm(uint64_t* cpu_state);
 __attribute__((noreturn)) extern void dispatch_regcall_loop(uint64_t* cpu_state);
+void dispatch_regcall();
+void dispatch_regcall_fullresolve();
 
 #define QUICK_TLB_OFFSET_ASM(dest_reg, addr_reg) \
         lea dest_reg, [addr_reg * 4]; \
@@ -329,41 +338,30 @@ dispatch_hhvm:
 
 #endif // defined(__x86_64__)
 
-int
-dispatch_loop(struct State* state, uintptr_t ip, uintptr_t sp) {
-    struct CpuState* cpu_state = mem_alloc_data(sizeof(struct CpuState),
-                                                _Alignof(struct CpuState));
-    // TODO: check for BAD_ADDR(cpu_state)
-    memset(cpu_state, 0, sizeof(*cpu_state));
-    cpu_state->self = cpu_state;
-    cpu_state->state = state;
-
-    uint64_t* cpu_regs = (uint64_t*) &cpu_state->regdata;
-
-    cpu_regs[0] = ip;
-    if (state->tsc.tsc_guest_arch == EM_X86_64) {
-        cpu_regs[5] = sp;
-    } else if (state->tsc.tsc_guest_arch == EM_RISCV) {
-        cpu_regs[3] = sp;
-    } else {
-        // well... -.-
-        puts("error: unsupported architecture");
-        return -ENOEXEC;
-    }
-
-    switch (state->tc.tc_callconv) {
-    case 0: {
-        while (true)
-            dispatch_cdecl(cpu_regs);
-    }
+const struct DispatcherInfo*
+dispatch_get(struct State* state) {
+    static const struct DispatcherInfo infos[] = {
+        [0] = {
+            .loop_func = dispatch_cdecl_loop,
+            .quick_dispatch_func = dispatch_cdecl,
+            .full_dispatch_func = dispatch_cdecl,
+        },
 #if defined(__x86_64__)
-    case 1:
-        dispatch_hhvm(cpu_regs);
-    case 2:
-        dispatch_regcall_loop(cpu_regs);
+        [1] = {
+            .loop_func = dispatch_hhvm,
+            .quick_dispatch_func = NULL, // HHVM doesn't support this...
+            .full_dispatch_func = NULL,
+        },
+        [2] = {
+            .loop_func = dispatch_regcall_loop,
+            .quick_dispatch_func = dispatch_regcall,
+            .full_dispatch_func = dispatch_regcall_fullresolve,
+        },
 #endif // defined(__x86_64__)
-    default:
-        puts("error: unsupported calling convention");
-        return -EOPNOTSUPP;
-    }
+    };
+
+    unsigned callconv = state->tc.tc_callconv;
+    if (callconv < sizeof infos / sizeof infos[0])
+        return &infos[callconv];
+    return NULL;
 }

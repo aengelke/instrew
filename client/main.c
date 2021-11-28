@@ -128,6 +128,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    const struct DispatcherInfo* disp_info = dispatch_get(&state);
+    if (!disp_info || !disp_info->loop_func) {
+        puts("error: unsupported calling convention");
+        return -EOPNOTSUPP;
+    }
+
     // TODO: don't hardcode stack size
     // TODO: support execstack
 #define STACK_SIZE 0x1000000
@@ -200,8 +206,27 @@ int main(int argc, char** argv) {
         return retval;
     }
 
-    retval = dispatch_loop(&state, (uintptr_t) info.exec_entry,
-                           (uintptr_t) stack_top);
+    struct CpuState* cpu_state = mem_alloc_data(sizeof(struct CpuState),
+                                                _Alignof(struct CpuState));
+    // TODO: check for BAD_ADDR(cpu_state)
+    memset(cpu_state, 0, sizeof(*cpu_state));
+    cpu_state->self = cpu_state;
+    cpu_state->state = &state;
+
+    uint64_t* cpu_regs = (uint64_t*) &cpu_state->regdata;
+
+    cpu_regs[0] = (uintptr_t) info.exec_entry;
+    if (state.tsc.tsc_guest_arch == EM_X86_64) {
+        cpu_regs[5] = (uintptr_t) stack_top;
+    } else if (state.tsc.tsc_guest_arch == EM_RISCV) {
+        cpu_regs[3] = (uintptr_t) stack_top;
+    } else {
+        // well... -.-
+        puts("error: unsupported architecture");
+        return -ENOEXEC;
+    }
+
+    disp_info->loop_func(cpu_regs);
 
 out:
     return retval;

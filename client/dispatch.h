@@ -3,8 +3,9 @@
 #define _INSTREW_DISPATCH_H
 
 #include <common.h>
+#include <dispatcher-info.h>
 #include <state.h>
 
-int dispatch_loop(struct State* state, uintptr_t ip, uintptr_t sp);
+const struct DispatcherInfo* dispatch_get(struct State* state);
 
 #endif
