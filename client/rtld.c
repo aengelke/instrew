@@ -554,3 +554,12 @@ rtld_resolve(Rtld* r, uintptr_t addr, void** out_entry) {
 
     return -ENOENT;
 }
+
+void
+rtld_patch(struct RtldPatchData* patch_data, void* sym) {
+    if (!patch_data)
+        return; // Nothing to patch
+
+    // TODO: implement patching
+    (void) sym;
+}

@@ -13,7 +13,7 @@
 
 // Prototype to make compilers happy. This is used in the assembly HHVM
 // dispatcher on x86-64 below.
-uintptr_t resolve_func(struct CpuState*, uintptr_t);
+uintptr_t resolve_func(struct CpuState*, uintptr_t, struct RtldPatchData*);
 
 static void
 print_trace(struct CpuState* cpu_state, uintptr_t addr) {
@@ -36,7 +36,8 @@ print_trace(struct CpuState* cpu_state, uintptr_t addr) {
 #define QUICK_TLB_HASH(addr) (((addr) >> 2) & ((1 << QUICK_TLB_BITS) - 1))
 
 uintptr_t
-resolve_func(struct CpuState* cpu_state, uintptr_t addr) {
+resolve_func(struct CpuState* cpu_state, uintptr_t addr,
+             struct RtldPatchData* patch_data) {
     struct State* state = cpu_state->state;
 
     void* func;
@@ -72,6 +73,10 @@ resolve_func(struct CpuState* cpu_state, uintptr_t addr) {
     // every dispatch, yielding a complete trace. Tracing is slow anyway, so we
     // don't care about performance when tracing is active.
     if (LIKELY(!state->config.print_trace)) {
+        // If possible, patch code which caused us to get here.
+        rtld_patch(patch_data, func);
+
+        // Update quick TLB
         uintptr_t hash = QUICK_TLB_HASH(addr);
         cpu_state->quick_tlb[hash][0] = addr;
         cpu_state->quick_tlb[hash][1] = (uintptr_t) func;
@@ -97,7 +102,7 @@ inline void dispatch_cdecl(uint64_t* cpu_regs) {
 
     uintptr_t func = cpu_state->quick_tlb[hash][1];
     if (UNLIKELY(cpu_state->quick_tlb[hash][0] != addr))
-        func = resolve_func(cpu_state, addr);
+        func = resolve_func(cpu_state, addr, NULL);
 
     void(* func_p)(void*);
     *((void**) &func_p) = (void*) func;
@@ -123,8 +128,11 @@ dispatch_regcall:
     mov r11, rax;
     and r11, ((1 << QUICK_TLB_BITS) - 1) << 2;
     cmp rax, [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
-    jne dispatch_regcall_fullresolve;
+    jne 1f;
     jmp [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
+    ud2;
+1:  xor r11, r11; // zero patch data
+    jmp dispatch_regcall_fullresolve;
     .size dispatch_regcall, .-dispatch_regcall;
 
     .align 16;
@@ -144,8 +152,8 @@ dispatch_regcall_loop:
     cmp rax, [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     je 1b;
 
+    xor r11, r11; // zero patch data
     call dispatch_regcall_fullresolve;
-    xor r11, r11;
     jmp 2b;
     .size dispatch_regcall_loop, .-dispatch_regcall_loop;
 
@@ -181,6 +189,7 @@ dispatch_regcall_fullresolve:
     movaps [rsp + 16*15], xmm15;
     mov rdi, [r12 - CPU_STATE_REGDATA_OFFSET]; // cpu_state
     mov rsi, rax; // addr
+    mov rdx, r11; // patch data
     call resolve_func;
     // pop r11;
     movaps xmm0, [rsp + 16*0];
@@ -229,6 +238,7 @@ dispatch_hhvm_resolve: // stack alignment: hhvm
     push r11;
     mov rdi, [r12 - CPU_STATE_REGDATA_OFFSET]; // cpu_state
     mov rsi, rbx; // addr
+    xor edx, edx; // patch data
     call resolve_func;
     mov r14, rax; // return value
     // Restore callee-saved registers.
