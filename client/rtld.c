@@ -519,8 +519,11 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
                     continue;
                 if (ELF64_ST_VISIBILITY(elf_sym->st_other) != STV_DEFAULT)
                     continue;
-                if (rtld_elf_resolve_sym(&re, i, j, &entry) < 0)
-                    goto out;
+                if (elf_sym->st_shndx == SHN_UNDEF)
+                    continue;
+                if (elf_sym->st_shndx >= re.re_ehdr->e_shnum)
+                    return -EINVAL;
+                entry = re.re_shdr[elf_sym->st_shndx].sh_addr + elf_sym->st_value;
 
                 // Determine address from name, encoded in Z<octaladdr>_ignored
                 const char* name = NULL;
