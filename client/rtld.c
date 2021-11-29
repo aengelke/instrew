@@ -103,6 +103,52 @@ plt_create(const struct DispatcherInfo* disp_info, void** out_plt) {
     return 0;
 }
 
+struct RtldPatchData {
+    unsigned rel_type;
+    unsigned rel_size;
+    int64_t addend;
+    uintptr_t addr;
+};
+
+static int
+rtld_patch_create_stub(Rtld* rtld, const struct RtldPatchData* patch_data,
+                       uintptr_t* out_stub) {
+#if defined(__x86_64__)
+    _Static_assert(_Alignof(struct RtldPatchData) <= 0x10,
+                   "patch data alignment too big");
+    unsigned pdr = rtld->disp_info->patch_data_reg;
+    uint8_t stcode[0x10 + sizeof(*patch_data)] = {
+        0x48 + 4*(pdr>=8), 0x8d, 5+((pdr&7)<<3), 9, 0, 0, 0, // lea rXX, [rip+9]
+        0xe9, 0, 0, 0, 0, // jmp ...
+        0x0f, 0x0b, 0x0f, 0x0b, // ud2; ud2
+    };
+#else
+    char stcode;
+    return -EOPNOTSUPP;
+#endif
+
+    void* stub = mem_alloc_code(sizeof(stcode), 0x40);
+    if (BAD_ADDR(stub))
+        return (int) (uintptr_t) stub;
+
+    uintptr_t jmptgt = (uintptr_t) rtld->plt + 1 * PLT_FUNC_SIZE;
+    ptrdiff_t jmptgtdiff = jmptgt - (uintptr_t) stub;
+
+#if defined(__x86_64__)
+    *(uint32_t*) (stcode + 8) = jmptgtdiff - 12;
+#endif
+
+    memcpy(stcode+sizeof(stcode)-sizeof(*patch_data), patch_data, sizeof(*patch_data));
+
+    int ret = mem_write_code(stub, stcode, sizeof(stcode));
+    if (ret < 0)
+        return ret;
+
+    *out_stub = (uintptr_t) stub;
+    return 0;
+}
+
+
 static uintptr_t
 rtld_decode_name(const char* name) {
     if (name[0] != 'Z')
@@ -189,7 +235,9 @@ rtld_elf_resolve_str(RtldElf* re, size_t strtab_idx, size_t str_idx, const char*
 }
 
 static int
-rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* out_addr) {
+rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx,
+                     const struct RtldPatchData* patch_data,
+                     uintptr_t* out_addr) {
     if (symtab_idx == 0 || symtab_idx >= re->re_ehdr->e_shnum)
         return -EINVAL;
     Elf64_Shdr* sym_shdr = re->re_shdr + symtab_idx;
@@ -213,12 +261,12 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* 
         } else {
             uintptr_t addr = rtld_decode_name(name);
             if (addr) {
-                if (rtld_resolve(re->rtld, addr, (void**) out_addr) != 0) {
-                    // Unable to resolve symbol, so just use dispatcher instead.
-                    // TODO: create a stub with patching information
-                    *out_addr = (uintptr_t) re->rtld->plt + 0 * PLT_FUNC_SIZE;
-                }
-                return 0;
+                if (!rtld_resolve(re->rtld, addr, (void**) out_addr))
+                    return 0; // we got it already
+                if (!rtld_patch_create_stub(re->rtld, patch_data, out_addr))
+                    return 0; // we got a stub
+                *out_addr = (uintptr_t) re->rtld->plt + 0 * PLT_FUNC_SIZE;
+                return 0; // use normal dispatcher as last resort
             }
 
             // Search through PLT
@@ -284,12 +332,6 @@ rtld_elf_unsigned_range(uint64_t val, unsigned bits, const char* relinfo) {
     }
     return true;
 }
-
-struct RtldPatchData {
-    unsigned rel_type;
-    int64_t addend;
-    uintptr_t addr;
-};
 
 static void
 rtld_blend(void* tgt, uint64_t mask, uint64_t data) {
@@ -433,16 +475,18 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
         if (elf_rela->r_offset >= tgt_shdr->sh_size)
             return -EINVAL;
 
-        unsigned sym_idx = ELF64_R_SYM(elf_rela->r_info);
-        uint64_t sym;
-        if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
-            return -EINVAL;
-
         struct RtldPatchData reloc_patch = {
             .rel_type = ELF64_R_TYPE(elf_rela->r_info),
+            .rel_size = 8, // TODO: be more accurate
             .addend = elf_rela->r_addend,
             .addr = tgt_shdr->sh_addr + elf_rela->r_offset,
         };
+
+        unsigned sym_idx = ELF64_R_SYM(elf_rela->r_info);
+        uint64_t sym;
+        if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &reloc_patch, &sym) < 0)
+            return -EINVAL;
+
         uint8_t* tgt = sec_write_addr + elf_rela->r_offset;
         int retval = rtld_reloc_at(&reloc_patch, tgt, (void*) sym);
         if (retval < 0)
@@ -608,9 +652,13 @@ rtld_resolve(Rtld* r, uintptr_t addr, void** out_entry) {
 
 void
 rtld_patch(struct RtldPatchData* patch_data, void* sym) {
+    // Ignore relocations failures and cases where nothing is to patch.
+    char reloc_buf[8];
     if (!patch_data)
-        return; // Nothing to patch
-
-    // TODO: implement patching
-    (void) sym;
+        return;
+    if (patch_data->rel_size > sizeof reloc_buf)
+        return;
+    memcpy(reloc_buf, (void*) patch_data->addr, patch_data->rel_size);
+    (void) rtld_reloc_at(patch_data, reloc_buf, sym);
+    mem_write_code((void*) patch_data->addr, reloc_buf, patch_data->rel_size);
 }

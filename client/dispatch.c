@@ -347,17 +347,20 @@ dispatch_get(struct State* state) {
             .loop_func = dispatch_cdecl_loop,
             .quick_dispatch_func = dispatch_cdecl,
             .full_dispatch_func = dispatch_cdecl,
+            .patch_data_reg = 6, // rsi
         },
 #if defined(__x86_64__)
         [1] = {
             .loop_func = dispatch_hhvm,
             .quick_dispatch_func = NULL, // HHVM doesn't support this...
             .full_dispatch_func = NULL,
+            .patch_data_reg = 14, // r14
         },
         [2] = {
             .loop_func = dispatch_regcall_loop,
             .quick_dispatch_func = dispatch_regcall,
             .full_dispatch_func = dispatch_regcall_fullresolve,
+            .patch_data_reg = 11, // r11
         },
 #endif // defined(__x86_64__)
     };

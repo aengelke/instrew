@@ -8,6 +8,8 @@ struct DispatcherInfo {
     void (*loop_func)(uint64_t* cpu_regs);
     void (*quick_dispatch_func)();
     void (*full_dispatch_func)();
+
+    uint8_t patch_data_reg;
 };
 
 #endif
