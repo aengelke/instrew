@@ -210,6 +210,16 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* 
             *out_addr = 0; // TODO!
             return 0;
         } else {
+            uintptr_t addr = rtld_decode_name(name);
+            if (addr) {
+                if (rtld_resolve(re->rtld, addr, (void**) out_addr) != 0) {
+                    // Unable to resolve symbol, so just use dispatcher instead.
+                    // TODO: create a stub with patching information
+                    *out_addr = (uintptr_t) re->rtld->plt + 0 * PLT_FUNC_SIZE;
+                }
+                return 0;
+            }
+
             // Search through PLT
             for (size_t i = 0; plt_entries[i].name; i++) {
                 if (!strcmp(name, plt_entries[i].name)) {
@@ -217,10 +227,6 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx, uintptr_t* 
                     return 0;
                 }
             }
-
-            uintptr_t addr = rtld_decode_name(name);
-            if (addr && !rtld_resolve(re->rtld, addr, (void**) out_addr))
-                return 0;
 
             dprintf(2, "undefined symbol reference to %s\n", name);
             return -EINVAL;
