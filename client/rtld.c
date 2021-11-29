@@ -1,6 +1,7 @@
 
 #include <common.h>
 #include <elf.h>
+#include <limits.h>
 #include <linux/fcntl.h>
 #include <linux/fs.h>
 #include <linux/mman.h>
@@ -284,6 +285,126 @@ rtld_elf_unsigned_range(uint64_t val, unsigned bits, const char* relinfo) {
     return true;
 }
 
+struct RtldPatchData {
+    unsigned rel_type;
+    int64_t addend;
+    uintptr_t addr;
+};
+
+static void
+rtld_blend(void* tgt, uint64_t mask, uint64_t data) {
+    if (mask > UINT32_MAX)
+        *(uint64_t*) tgt = (data & mask) | (*(uint64_t*) tgt & ~mask);
+    else if (mask > UINT16_MAX)
+        *(uint32_t*) tgt = (data & mask) | (*(uint32_t*) tgt & ~mask);
+    else if (mask > UINT8_MAX)
+        *(uint16_t*) tgt = (data & mask) | (*(uint16_t*) tgt & ~mask);
+    else
+        *(uint8_t*) tgt = (data & mask) | (*(uint8_t*) tgt & ~mask);
+}
+
+static int
+rtld_reloc_at(const struct RtldPatchData* patch_data, void* tgt, void* sym) {
+    uint64_t syma = (uintptr_t) sym + patch_data->addend;
+    uint64_t pc = patch_data->addr;
+    int64_t prel_syma = syma - (int64_t) pc;
+
+    switch (patch_data->rel_type) {
+#if defined(__x86_64__)
+    case R_X86_64_PC64:
+        rtld_blend(tgt, UINT64_MAX, prel_syma);
+        break;
+    case R_X86_64_64:
+        rtld_blend(tgt, UINT64_MAX, syma);
+        break;
+    case R_X86_64_PC32:
+        if (!rtld_elf_signed_range(prel_syma, 32, "R_X86_64_PC32"))
+            return -EINVAL;
+        rtld_blend(tgt, 0xffffffff, prel_syma);
+        break;
+    case R_X86_64_PLT32:
+        if (!rtld_elf_signed_range(prel_syma, 32, "R_X86_64_PLT32"))
+            return -EINVAL;
+        rtld_blend(tgt, 0xffffffff, prel_syma);
+        break;
+    case R_X86_64_32S:
+        if (!rtld_elf_signed_range(syma, 32, "R_X86_64_32S"))
+            return -EINVAL;
+        rtld_blend(tgt, 0xffffffff, syma);
+        break;
+    case R_X86_64_32:
+        if (!rtld_elf_unsigned_range(syma, 32, "R_X86_64_32S"))
+            return -EINVAL;
+        rtld_blend(tgt, 0xffffffff, syma);
+        break;
+#elif defined(__aarch64__)
+    case R_AARCH64_PREL32:
+        if (!rtld_elf_signed_range(prel_syma, 32, "R_AARCH64_PREL32"))
+            return -EINVAL;
+        rtld_blend(tgt, 0xffffffff, prel_syma);
+        break;
+    case R_AARCH64_JUMP26:
+    case R_AARCH64_CALL26:
+        if (!CHECK_SIGNED_BITS(prel_syma, 28)) {
+            // Ok, let's create a stub.
+            // TODO: make stubs more compact/efficient
+            uintptr_t stub = 0;
+            int ret = rtld_elf_add_stub(syma, &stub);
+            if (ret < 0)
+                return ret;
+            prel_syma = stub - pc;
+        }
+        if (!rtld_elf_signed_range(prel_syma, 28, "R_AARCH64_JUMP26"))
+            return -EINVAL;
+        rtld_blend(tgt, 0x03ffffff, prel_syma >> 2);
+        break;
+    case R_AARCH64_ADR_PREL_PG_HI21:
+        prel_syma = ALIGN_DOWN(syma, 1<<12) - ALIGN_DOWN(pc, 1<<12);
+        prel_syma >>= 12;
+        if (!rtld_elf_signed_range(prel_syma, 21, "R_AARCH64_PG_HI21"))
+            return -EINVAL;
+        rtld_blend(tgt, 0x60ffffe0, ((prel_syma & 3) << 29) |
+                                    (((prel_syma >> 2) & 0x7ffff) << 5));
+        break;
+    case R_AARCH64_ADD_ABS_LO12_NC:
+        rtld_blend(tgt, 0xfff << 10, syma << 10);
+        break;
+    case R_AARCH64_LDST8_ABS_LO12_NC:
+        rtld_blend(tgt, 0xfff << 10, syma << 10);
+        break;
+    case R_AARCH64_LDST16_ABS_LO12_NC:
+        rtld_blend(tgt, 0xfff >> 1 << 10, syma >> 1 << 10);
+        break;
+    case R_AARCH64_LDST32_ABS_LO12_NC:
+        rtld_blend(tgt, 0xfff >> 2 << 10, syma >> 2 << 10);
+        break;
+    case R_AARCH64_LDST64_ABS_LO12_NC:
+        rtld_blend(tgt, 0xfff >> 3 << 10, syma >> 3 << 10);
+        break;
+    case R_AARCH64_LDST128_ABS_LO12_NC:
+        rtld_blend(tgt, 0xfff >> 4 << 10, syma >> 4 << 10);
+        break;
+    case R_AARCH64_MOVW_UABS_G0_NC:
+        rtld_blend(tgt, 0xffff << 5, syma >> 0 << 5);
+        break;
+    case R_AARCH64_MOVW_UABS_G1_NC:
+        rtld_blend(tgt, 0xffff << 5, syma >> 16 << 5);
+        break;
+    case R_AARCH64_MOVW_UABS_G2_NC:
+        rtld_blend(tgt, 0xffff << 5, syma >> 32 << 5);
+        break;
+    case R_AARCH64_MOVW_UABS_G3:
+        rtld_blend(tgt, 0xffff << 5, syma >> 48 << 5);
+        break;
+#endif
+    default:
+        dprintf(2, "unhandled relocation %u\n", patch_data->rel_type);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
 static int
 rtld_elf_process_rela(RtldElf* re, int rela_idx) {
     if (rela_idx == 0 || rela_idx >= re->re_ehdr->e_shnum)
@@ -316,103 +437,16 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
         uint64_t sym;
         if (rtld_elf_resolve_sym(re, symtab_idx, sym_idx, &sym) < 0)
             return -EINVAL;
-        uint64_t syma = sym + elf_rela->r_addend;
-        uint64_t pc = tgt_shdr->sh_addr + elf_rela->r_offset;
-        int64_t prel_syma = syma - (int64_t) pc;
 
+        struct RtldPatchData reloc_patch = {
+            .rel_type = ELF64_R_TYPE(elf_rela->r_info),
+            .addend = elf_rela->r_addend,
+            .addr = tgt_shdr->sh_addr + elf_rela->r_offset,
+        };
         uint8_t* tgt = sec_write_addr + elf_rela->r_offset;
-        switch (ELF64_R_TYPE(elf_rela->r_info)) {
-#if defined(__x86_64__)
-        case R_X86_64_64:
-            *((uint64_t*) tgt) = syma;
-            break;
-        case R_X86_64_PC32:
-            if (!rtld_elf_signed_range(prel_syma, 32, "R_X86_64_PC32"))
-                return -EINVAL;
-            *((int32_t*) tgt) = prel_syma;
-            break;
-        case R_X86_64_PLT32:
-            if (!rtld_elf_signed_range(prel_syma, 32, "R_X86_64_PLT32"))
-                return -EINVAL;
-            *((int32_t*) tgt) = prel_syma;
-            break;
-        case R_X86_64_32S:
-            if (!rtld_elf_signed_range(syma, 32, "R_X86_64_32S"))
-                return -EINVAL;
-            *((int32_t*) tgt) = syma;
-            break;
-        case R_X86_64_32:
-            if (!rtld_elf_unsigned_range(syma, 32, "R_X86_64_32S"))
-                return -EINVAL;
-            *((uint32_t*) tgt) = syma;
-            break;
-        case R_X86_64_PC64:
-            *((uint64_t*) tgt) = prel_syma;
-            break;
-#elif defined(__aarch64__)
-        case R_AARCH64_PREL32:
-            if (!rtld_elf_signed_range(prel_syma, 32, "R_AARCH64_PREL32"))
-                return -EINVAL;
-            *((int32_t*) tgt) = prel_syma;
-            break;
-        case R_AARCH64_JUMP26:
-        case R_AARCH64_CALL26:
-            if (!CHECK_SIGNED_BITS(prel_syma, 28)) {
-                // Ok, let's create a stub.
-                // TODO: make stubs more compact/efficient
-                uintptr_t stub = 0;
-                int ret = rtld_elf_add_stub(syma, &stub);
-                if (ret < 0)
-                    return ret;
-                prel_syma = stub - pc;
-            }
-            if (!rtld_elf_signed_range(prel_syma, 28, "R_AARCH64_JUMP26"))
-                return -EINVAL;
-            *((uint32_t*) tgt) |= (prel_syma >> 2) & 0x3ffffff;
-            break;
-        case R_AARCH64_ADR_PREL_PG_HI21:
-            prel_syma = ALIGN_DOWN(syma, 1<<12) - ALIGN_DOWN(pc, 1<<12);
-            prel_syma >>= 12;
-            if (!rtld_elf_signed_range(prel_syma, 21, "R_AARCH64_PG_HI21"))
-                return -EINVAL;
-            *((int32_t*) tgt) |= ((prel_syma & 3) << 29) |
-                                 (((prel_syma >> 2) & 0x7ffff) << 5);
-            break;
-        case R_AARCH64_ADD_ABS_LO12_NC:
-            *((int32_t*) tgt) |= (syma & 0xfff) << 10;
-            break;
-        case R_AARCH64_LDST8_ABS_LO12_NC:
-            *((int32_t*) tgt) |= (syma & 0xfff) << 10;
-            break;
-        case R_AARCH64_LDST16_ABS_LO12_NC:
-            *((int32_t*) tgt) |= (syma & 0xfff) >> 1 << 10;
-            break;
-        case R_AARCH64_LDST32_ABS_LO12_NC:
-            *((int32_t*) tgt) |= (syma & 0xfff) >> 2 << 10;
-            break;
-        case R_AARCH64_LDST64_ABS_LO12_NC:
-            *((int32_t*) tgt) |= (syma & 0xfff) >> 3 << 10;
-            break;
-        case R_AARCH64_LDST128_ABS_LO12_NC:
-            *((int32_t*) tgt) |= (syma & 0xfff) >> 4 << 10;
-            break;
-        case R_AARCH64_MOVW_UABS_G0_NC:
-            *((int32_t*) tgt) |= (syma & 0xffff) << 5;
-            break;
-        case R_AARCH64_MOVW_UABS_G1_NC:
-            *((int32_t*) tgt) |= ((syma >> 16) & 0xffff) << 5;
-            break;
-        case R_AARCH64_MOVW_UABS_G2_NC:
-            *((int32_t*) tgt) |= ((syma >> 32) & 0xffff) << 5;
-            break;
-        case R_AARCH64_MOVW_UABS_G3:
-            *((int32_t*) tgt) |= ((syma >> 48) & 0xffff) << 5;
-            break;
-#endif
-        default:
-            dprintf(2, "unhandled relocation %u\n", ELF64_R_TYPE(elf_rela->r_info));
-            return -EINVAL;
-        }
+        int retval = rtld_reloc_at(&reloc_patch, tgt, (void*) sym);
+        if (retval < 0)
+            return retval;
     }
 
     return 0;
