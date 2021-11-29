@@ -3,6 +3,7 @@
 #define _INSTREW_RTLD_H
 
 #include <common.h>
+#include <dispatcher-info.h>
 
 typedef struct {
     uintptr_t addr;
@@ -12,6 +13,7 @@ typedef struct {
 } RtldObject;
 struct Rtld {
     int perfmap_fd;
+    const struct DispatcherInfo* disp_info;
 
     RtldObject* objects;
     size_t objects_idx;
@@ -25,7 +27,7 @@ typedef struct Rtld Rtld;
 
 struct RtldPatchData;
 
-int rtld_init(Rtld* r, int perfmap_fd);
+int rtld_init(Rtld* r, int perfmap_fd, const struct DispatcherInfo* disp_info);
 int rtld_resolve(Rtld* r, uintptr_t addr, void** out_entry);
 
 int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size);

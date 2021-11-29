@@ -43,6 +43,8 @@ struct PltEntry {
 #undef PLT_ENTRY
 
 static const struct PltEntry plt_entries[] = {
+    { "instrew_quick_dispatch", 0 }, // dynamically set below
+    { "instrew_full_dispatch", 0 }, // dynamically set below
 #define PLT_ENTRY(name, func) { name, (uintptr_t) &(PASTE(rtld_plt_, func)) },
 #include "plt.inc"
 #undef PLT_ENTRY
@@ -58,7 +60,7 @@ static const struct PltEntry plt_entries[] = {
 #endif
 
 static int
-plt_create(void** out_plt) {
+plt_create(const struct DispatcherInfo* disp_info, void** out_plt) {
     size_t plt_entry_count = sizeof(plt_entries) / sizeof(plt_entries[0]) - 1;
     size_t code_size = plt_entry_count * PLT_FUNC_SIZE;
     size_t data_offset = ALIGN_UP(code_size, 0x40);
@@ -72,7 +74,12 @@ plt_create(void** out_plt) {
         uintptr_t* data_ptr = &plt[data_offset / sizeof(uintptr_t) + i];
         ptrdiff_t offset = (char*) data_ptr - (char*) code_ptr;
 
-        *data_ptr = plt_entries[i].func;
+        if (i == 0)
+            *data_ptr = (uintptr_t) disp_info->quick_dispatch_func;
+        else if (i == 1)
+            *data_ptr = (uintptr_t) disp_info->full_dispatch_func;
+        else
+            *data_ptr = plt_entries[i].func;
 #if defined(__x86_64__)
         // This is: "jmp [rip + offset]; ud2"
         *((uint64_t*) code_ptr) = 0x0b0f0000000025ff | ((offset - 6) << 16);
@@ -528,7 +535,7 @@ out:
 }
 
 int
-rtld_init(Rtld* r, int perfmap_fd) {
+rtld_init(Rtld* r, int perfmap_fd, const struct DispatcherInfo* disp_info) {
     size_t table_size = sizeof(RtldObject) * (1 << RTLD_HASH_BITS);
     RtldObject* objects = mem_alloc_data(table_size, getpagesize());
     if (BAD_ADDR(objects))
@@ -536,8 +543,9 @@ rtld_init(Rtld* r, int perfmap_fd) {
 
     r->objects = objects;
     r->perfmap_fd = perfmap_fd;
+    r->disp_info = disp_info;
 
-    int retval = plt_create(&r->plt);
+    int retval = plt_create(disp_info, &r->plt);
     if (retval < 0)
         return retval;
 

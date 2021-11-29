@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
         stack_top[i] = (size_t) argv[i];
     *(--stack_top) = argc; // Argument Count
 
-    retval = rtld_init(&state.rtld, state.config.perfmap_fd);
+    retval = rtld_init(&state.rtld, state.config.perfmap_fd, disp_info);
     if (retval < 0) {
         puts("error: could not initialize runtime linker");
         return retval;
