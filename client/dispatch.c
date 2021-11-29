@@ -34,7 +34,9 @@ print_trace(struct CpuState* cpu_state, uintptr_t addr) {
 }
 
 #define QUICK_TLB_BITS 10
-#define QUICK_TLB_HASH(addr) (((addr) >> 2) & ((1 << QUICK_TLB_BITS) - 1))
+#define QUICK_TLB_BITOFF 4 // must be either 1, 2, 3, or 4
+#define QUICK_TLB_IDXSCALE (1 << (4-QUICK_TLB_BITOFF))
+#define QUICK_TLB_HASH(addr) (((addr) >> QUICK_TLB_BITOFF) & ((1 << QUICK_TLB_BITS) - 1))
 
 uintptr_t
 resolve_func(struct CpuState* cpu_state, uintptr_t addr,
@@ -125,7 +127,7 @@ void dispatch_regcall_fullresolve();
 
 #define QUICK_TLB_OFFSET_ASM(dest_reg, addr_reg) \
         lea dest_reg, [addr_reg * 4]; \
-        and dest_reg, ((1 << QUICK_TLB_BITS) - 1) << 4;
+        and dest_reg, ((1 << QUICK_TLB_BITS) - 1) << (2 + QUICK_TLB_BITOFF);
 
 ASM_BLOCK(
     .intel_syntax noprefix;
@@ -135,10 +137,10 @@ ASM_BLOCK(
     .type dispatch_regcall, @function;
 dispatch_regcall:
     mov r11, rax;
-    and r11, ((1 << QUICK_TLB_BITS) - 1) << 2;
-    cmp rax, [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
+    and r11, ((1 << QUICK_TLB_BITS) - 1) << QUICK_TLB_BITOFF;
+    cmp rax, [r12 + QUICK_TLB_IDXSCALE*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     jne 1f;
-    jmp [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
+    jmp [r12 + QUICK_TLB_IDXSCALE*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
     ud2;
 1:  xor r11, r11; // zero patch data
     jmp dispatch_regcall_fullresolve;
@@ -155,10 +157,10 @@ dispatch_regcall_loop:
     jmp 2f;
 
     .align 16;
-1:  call [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
+1:  call [r12 + QUICK_TLB_IDXSCALE*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
 2:  mov r11, rax;
-    and r11, ((1 << QUICK_TLB_BITS) - 1) << 2;
-    cmp rax, [r12 + 4*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
+    and r11, ((1 << QUICK_TLB_BITS) - 1) << QUICK_TLB_BITOFF;
+    cmp rax, [r12 + QUICK_TLB_IDXSCALE*r11 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     je 1b;
 
     xor r11, r11; // zero patch data
@@ -269,10 +271,10 @@ dispatch_hhvm_resolve: // stack alignment: hhvm
     .type dispatch_hhvm_tail, @function;
 dispatch_hhvm_tail: // stack alignment: cdecl
     mov r14, rbx;
-    and r14, ((1 << QUICK_TLB_BITS) - 1) << 2;
-    cmp rbx, [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
+    and r14, ((1 << QUICK_TLB_BITS) - 1) << QUICK_TLB_BITOFF;
+    cmp rbx, [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     jne 1f;
-    jmp [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
+    jmp [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
     .align 16;
 1:  push rax; // for stack alignment
     call dispatch_hhvm_resolve;
@@ -285,10 +287,10 @@ dispatch_hhvm_tail: // stack alignment: cdecl
     .type dispatch_hhvm_call, @function;
 dispatch_hhvm_call: // stack alignment: hhvm
     mov r14, rbx;
-    and r14, ((1 << QUICK_TLB_BITS) - 1) << 2;
-    cmp rbx, [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
+    and r14, ((1 << QUICK_TLB_BITS) - 1) << QUICK_TLB_BITOFF;
+    cmp rbx, [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     jne 1f;
-    call [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
+    call [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
     ret;
     .align 16;
 1:  call dispatch_hhvm_resolve;
@@ -320,10 +322,10 @@ dispatch_hhvm:
 
     .align 16;
     // This is the quick_tlb hot loop.
-2:  call [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
+2:  call [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
 3:  mov r14, rbx;
-    and r14, ((1 << QUICK_TLB_BITS) - 1) << 2;
-    cmp rbx, [r12 + 4*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
+    and r14, ((1 << QUICK_TLB_BITS) - 1) << QUICK_TLB_BITOFF;
+    cmp rbx, [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
     je 2b;
 
     // This code isn't exactly cold, but should be executed not that often.
