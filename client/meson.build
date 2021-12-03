@@ -21,6 +21,14 @@ else
   client_link_args += ['-Wl,-static', '-Wl,-pie', '-Wl,--no-dynamic-linker', '-Wl,-z,text']
 endif
 
+if cc.get_define('__x86_64__') == '1'
+  if cc.has_argument('-mpreferred-stack-boundary=3')
+    client_c_args += ['-mpreferred-stack-boundary=3']
+  else
+    error('could not lower stack aligment')
+  endif
+endif
+
 config_data = configuration_data()
 config_data.set_quoted('INSTREW_DEFAULT_SERVER', get_option('prefix')/get_option('bindir')/'instrew-server')
 configure_file(configuration: config_data, output: 'instrew-client-config.h')

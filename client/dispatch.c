@@ -124,6 +124,8 @@ __attribute__((noreturn)) extern void dispatch_hhvm(uint64_t* cpu_state);
 __attribute__((noreturn)) extern void dispatch_regcall_loop(uint64_t* cpu_state);
 void dispatch_regcall();
 void dispatch_regcall_fullresolve();
+void dispatch_hhvm_tail();
+void dispatch_hhvm_fullresolve();
 
 #define QUICK_TLB_OFFSET_ASM(dest_reg, addr_reg) \
         lea dest_reg, [addr_reg * 4]; \
@@ -172,6 +174,9 @@ dispatch_regcall_loop:
     .type dispatch_regcall_fullresolve, @function;
 dispatch_regcall_fullresolve:
     // Save all cdecl caller-saved registers.
+    push rbp;
+    mov rbp, rsp;
+    and rsp, -16;
     push rax;
     push rcx;
     push rdx;
@@ -180,7 +185,6 @@ dispatch_regcall_fullresolve:
     push r8;
     push r9;
     push r10;
-    push r11; // for alignment
     sub rsp, 16 * 16;
     movaps [rsp + 16*0], xmm0;
     movaps [rsp + 16*1], xmm1;
@@ -219,7 +223,7 @@ dispatch_regcall_fullresolve:
     movaps xmm13, [rsp + 16*13];
     movaps xmm14, [rsp + 16*14];
     movaps xmm15, [rsp + 16*15];
-    add rsp, 8 + 16*16;
+    add rsp, 16*16;
     mov r11, rax;
     pop r10;
     pop r9;
@@ -350,8 +354,8 @@ dispatch_get(struct State* state) {
 #if defined(__x86_64__)
         [1] = {
             .loop_func = dispatch_hhvm,
-            .quick_dispatch_func = NULL, // HHVM doesn't support this...
-            .full_dispatch_func = NULL,
+            .quick_dispatch_func = dispatch_hhvm_tail,
+            .full_dispatch_func = dispatch_hhvm_fullresolve,
             .patch_data_reg = 14, // r14
         },
         [2] = {

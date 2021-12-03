@@ -17,6 +17,7 @@ INSTREW_SERVER_CONF_INT32(0, guest_arch, 0)
 INSTREW_SERVER_CONF_INT32(0, host_arch, 0)
 INSTREW_SERVER_CONF_INT32(0, host_cpu_features, 0)
 INSTREW_SERVER_CONF_INT32(0, server_mode, 0)
+INSTREW_SERVER_CONF_INT32(0, stack_alignment, 0)
 #elif defined(INSTREW_CLIENT_CONF)
 // INSTREW_CLIENT_CONF_*(id, name); defaults to zero.
 INSTREW_CLIENT_CONF_INT32(1, callconv)

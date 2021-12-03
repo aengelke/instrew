@@ -228,8 +228,6 @@ struct CCState {
             for (unsigned i = 0; i < fields.size(); i++)
                 params[fields[i].argidx] = vals[i];
 
-            if (tgt->getCallingConv() == llvm::CallingConv::HHVM)
-                goto nosubst; // HHVM's weird stack alignment prevents this.
             if (auto* tgt_cnst = llvm::dyn_cast<llvm::ConstantInt>(params[0])) {
                 uint64_t tgt_addr = tgt_cnst->getZExtValue();
                 if (!tgt_addr)

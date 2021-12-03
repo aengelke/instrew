@@ -35,6 +35,8 @@ public:
 
         llvm::TargetOptions target_options;
         target_options.EnableFastISel = 1; // Use FastISel for CodeGenOpt::None
+        if (server_config.tsc_stack_alignment != 0)
+            target_options.StackAlignmentOverride = server_config.tsc_stack_alignment;
 
         std::string triple;
         switch (server_config.tsc_host_arch) {

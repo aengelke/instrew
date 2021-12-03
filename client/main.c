@@ -106,6 +106,7 @@ int main(int argc, char** argv) {
     state.tsc.tsc_guest_arch = info.machine;
 #ifdef __x86_64__
     state.tsc.tsc_host_arch = EM_X86_64;
+    state.tsc.tsc_stack_alignment = 8;
 #elif defined(__aarch64__)
     state.tsc.tsc_host_arch = EM_AARCH64;
 #else
