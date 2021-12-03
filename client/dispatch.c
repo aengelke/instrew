@@ -249,7 +249,7 @@ dispatch_hhvm_resolve: // stack alignment: hhvm
     push r11;
     mov rdi, [r12 - CPU_STATE_REGDATA_OFFSET]; // cpu_state
     mov rsi, rbx; // addr
-    xor edx, edx; // patch data
+    mov rdx, r14; // patch data
     call resolve_func;
     mov r14, rax; // return value
     // Restore callee-saved registers.
@@ -277,6 +277,7 @@ dispatch_hhvm_tail: // stack alignment: cdecl
     jmp [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
     .align 16;
 1:  push rax; // for stack alignment
+    xor r14, r14; // zero patch data
     call dispatch_hhvm_resolve;
     pop rax;
     jmp r14;
@@ -293,7 +294,8 @@ dispatch_hhvm_call: // stack alignment: hhvm
     call [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
     ret;
     .align 16;
-1:  call dispatch_hhvm_resolve;
+1:  xor r14, r14; // zero patch data
+    call dispatch_hhvm_resolve;
     call r14;
     ret;
     .size dispatch_hhvm_call, .-dispatch_hhvm_call;
@@ -330,7 +332,8 @@ dispatch_hhvm:
 
     // This code isn't exactly cold, but should be executed not that often.
     // If we don't have addr in the quick_tlb, do a full resolve.
-4:  call dispatch_hhvm_resolve;
+4:  xor r14, r14; // zero patch data
+    call dispatch_hhvm_resolve;
     call r14; // can't deduplicate call because we don't get the qtlb pointer.
     jmp 3b;
     .size dispatch_hhvm, .-dispatch_hhvm;
