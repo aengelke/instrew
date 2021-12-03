@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <bitset>
 #include <iostream>
+#include <sstream>
 
 
 static uint64_t pointerOffset(llvm::Value* base, llvm::Value* ptr,
@@ -226,6 +227,20 @@ struct CCState {
             params[sptr->getArgNo()] = sptr;
             for (unsigned i = 0; i < fields.size(); i++)
                 params[fields[i].argidx] = vals[i];
+
+            if (tgt->getCallingConv() == llvm::CallingConv::HHVM)
+                goto nosubst; // HHVM's weird stack alignment prevents this.
+            if (auto* tgt_cnst = llvm::dyn_cast<llvm::ConstantInt>(params[0])) {
+                uint64_t tgt_addr = tgt_cnst->getZExtValue();
+                if (!tgt_addr)
+                    goto nosubst;
+                std::stringstream namebuf;
+                namebuf << "Z" << std::oct << tgt_addr << "_" << std::hex << tgt_addr;
+                tgt = llvm::cast<llvm::Function>(tgt->getParent()->getOrInsertFunction(namebuf.str(), tgt_ty).getCallee());
+                tgt->copyAttributesFrom(nfn);
+                tgt->setDSOLocal(true);
+            }
+        nosubst:
 
             auto newcall = irb.CreateCall(tgt_ty, tgt, params);
             newcall->setTailCallKind(call->getTailCallKind());
