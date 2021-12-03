@@ -229,15 +229,16 @@ dispatch_regcall_fullresolve:
     pop rdx;
     pop rcx;
     pop rax;
+    mov rsp, rbp;
+    pop rbp;
     jmp r11;
     .size dispatch_regcall_fullresolve, .-dispatch_regcall_fullresolve;
 
     // Stores result in r14, preserves all other registers
     .align 16;
-    .type dispatch_hhvm_resolve, @function;
-dispatch_hhvm_resolve: // stack alignment: hhvm
+    .type dispatch_hhvm_fullresolve, @function;
+dispatch_hhvm_fullresolve: // stack alignment: cdecl
     // Save all cdecl caller-saved registers.
-    push rax; // For alignment
     push rax;
     push rcx;
     push rdx;
@@ -262,9 +263,8 @@ dispatch_hhvm_resolve: // stack alignment: hhvm
     pop rdx;
     pop rcx;
     pop rax;
-    pop rax;
-    ret;
-    .size dispatch_hhvm_resolve, .-dispatch_hhvm_resolve;
+    jmp r14;
+    .size dispatch_hhvm_fullresolve, .-dispatch_hhvm_fullresolve;
 
     .align 16;
     .global dispatch_hhvm_tail;
@@ -276,11 +276,8 @@ dispatch_hhvm_tail: // stack alignment: cdecl
     jne 1f;
     jmp [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
     .align 16;
-1:  push rax; // for stack alignment
-    xor r14, r14; // zero patch data
-    call dispatch_hhvm_resolve;
-    pop rax;
-    jmp r14;
+1:  xor r14, r14; // zero patch data
+    jmp dispatch_hhvm_fullresolve;
     .size dispatch_hhvm_tail, .-dispatch_hhvm_tail;
 
     .align 16;
@@ -295,8 +292,7 @@ dispatch_hhvm_call: // stack alignment: hhvm
     ret;
     .align 16;
 1:  xor r14, r14; // zero patch data
-    call dispatch_hhvm_resolve;
-    call r14;
+    call dispatch_hhvm_fullresolve;
     ret;
     .size dispatch_hhvm_call, .-dispatch_hhvm_call;
 
@@ -333,8 +329,7 @@ dispatch_hhvm:
     // This code isn't exactly cold, but should be executed not that often.
     // If we don't have addr in the quick_tlb, do a full resolve.
 4:  xor r14, r14; // zero patch data
-    call dispatch_hhvm_resolve;
-    call r14; // can't deduplicate call because we don't get the qtlb pointer.
+    call dispatch_hhvm_fullresolve;
     jmp 3b;
     .size dispatch_hhvm, .-dispatch_hhvm;
 
