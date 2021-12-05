@@ -28,6 +28,36 @@
             ((val) >= -(1ll << (bits-1)) && (val) < (1ll << (bits-1))-1)
 #define CHECK_UNSIGNED_BITS(val,bits) ((val) < (1ull << (bits))-1)
 
+static bool
+rtld_elf_signed_range(int64_t val, unsigned bits, const char* relinfo) {
+    if (!CHECK_SIGNED_BITS(val, bits)) {
+        dprintf(2, "relocation offset out of range (%s): %lx\n", relinfo, val);
+        return false;
+    }
+    return true;
+}
+
+static bool
+rtld_elf_unsigned_range(uint64_t val, unsigned bits, const char* relinfo) {
+    if (!CHECK_UNSIGNED_BITS(val, bits)) {
+        dprintf(2, "relocation offset out of range (%s): %lx\n", relinfo, val);
+        return false;
+    }
+    return true;
+}
+
+static void
+rtld_blend(void* tgt, uint64_t mask, uint64_t data) {
+    if (mask > UINT32_MAX)
+        *(uint64_t*) tgt = (data & mask) | (*(uint64_t*) tgt & ~mask);
+    else if (mask > UINT16_MAX)
+        *(uint32_t*) tgt = (data & mask) | (*(uint32_t*) tgt & ~mask);
+    else if (mask > UINT8_MAX)
+        *(uint16_t*) tgt = (data & mask) | (*(uint16_t*) tgt & ~mask);
+    else
+        *(uint8_t*) tgt = (data & mask) | (*(uint8_t*) tgt & ~mask);
+}
+
 #define RTLD_HASH_BITS 17
 #define RTLD_HASH_MASK ((1 << RTLD_HASH_BITS) - 1)
 #define RTLD_HASH(addr) (((addr >> 2)) & RTLD_HASH_MASK)
@@ -113,19 +143,9 @@ struct RtldPatchData {
 static int
 rtld_patch_create_stub(Rtld* rtld, const struct RtldPatchData* patch_data,
                        uintptr_t* out_stub) {
-#if defined(__x86_64__)
     _Static_assert(_Alignof(struct RtldPatchData) <= 0x10,
                    "patch data alignment too big");
-    unsigned pdr = rtld->disp_info->patch_data_reg;
-    uint8_t stcode[0x10 + sizeof(*patch_data)] = {
-        0x48 + 4*(pdr>=8), 0x8d, 5+((pdr&7)<<3), 9, 0, 0, 0, // lea rXX, [rip+9]
-        0xe9, 0, 0, 0, 0, // jmp ...
-        0x0f, 0x0b, 0x0f, 0x0b, // ud2; ud2
-    };
-#else
-    char stcode;
-    return -EOPNOTSUPP;
-#endif
+    _Alignas(0x10) uint8_t stcode[0x10 + sizeof(*patch_data)];
 
     void* stub = mem_alloc_code(sizeof(stcode), 0x40);
     if (BAD_ADDR(stub))
@@ -133,9 +153,24 @@ rtld_patch_create_stub(Rtld* rtld, const struct RtldPatchData* patch_data,
 
     uintptr_t jmptgt = (uintptr_t) rtld->plt + 1 * PLT_FUNC_SIZE;
     ptrdiff_t jmptgtdiff = jmptgt - (uintptr_t) stub;
+    unsigned pdr = rtld->disp_info->patch_data_reg;
 
 #if defined(__x86_64__)
+    uint8_t tmpl[] = {
+        0x48 + 4*(pdr>=8), 0x8d, 5+((pdr&7)<<3), 9, 0, 0, 0, // lea rXX, [rip+9]
+        0xe9, // jmp ...
+    };
+    memcpy(stcode, tmpl, sizeof tmpl);
     *(uint32_t*) (stcode + 8) = jmptgtdiff - 12;
+    *(uint32_t*) (stcode + 12) = 0x0b0f0b0f; // ud2
+#elif defined(__aarch64__)
+    *(uint32_t*) (stcode) = 0x10000080 + pdr; // ADR xXX, pc + 0x10
+    *(uint32_t*) (stcode + 4) = 0x14000000; // B ...
+    if (!rtld_elf_signed_range(jmptgtdiff - 4, 28, "R_AARCH64_JUMP26"))
+        return -EINVAL;
+    rtld_blend(stcode + 4, 0x03ffffff, (jmptgtdiff - 4) >> 2);
+#else
+#error "missing patch stub"
 #endif
 
     memcpy(stcode+sizeof(stcode)-sizeof(*patch_data), patch_data, sizeof(*patch_data));
@@ -314,36 +349,6 @@ rtld_elf_add_stub(uintptr_t sym, uintptr_t* out_stub) {
     return 0;
 }
 #endif
-
-static bool
-rtld_elf_signed_range(int64_t val, unsigned bits, const char* relinfo) {
-    if (!CHECK_SIGNED_BITS(val, bits)) {
-        dprintf(2, "relocation offset out of range (%s): %lx\n", relinfo, val);
-        return false;
-    }
-    return true;
-}
-
-static bool
-rtld_elf_unsigned_range(uint64_t val, unsigned bits, const char* relinfo) {
-    if (!CHECK_UNSIGNED_BITS(val, bits)) {
-        dprintf(2, "relocation offset out of range (%s): %lx\n", relinfo, val);
-        return false;
-    }
-    return true;
-}
-
-static void
-rtld_blend(void* tgt, uint64_t mask, uint64_t data) {
-    if (mask > UINT32_MAX)
-        *(uint64_t*) tgt = (data & mask) | (*(uint64_t*) tgt & ~mask);
-    else if (mask > UINT16_MAX)
-        *(uint32_t*) tgt = (data & mask) | (*(uint32_t*) tgt & ~mask);
-    else if (mask > UINT8_MAX)
-        *(uint16_t*) tgt = (data & mask) | (*(uint16_t*) tgt & ~mask);
-    else
-        *(uint8_t*) tgt = (data & mask) | (*(uint8_t*) tgt & ~mask);
-}
 
 static int
 rtld_reloc_at(const struct RtldPatchData* patch_data, void* tgt, void* sym) {
