@@ -634,7 +634,8 @@ size_t getpagesize(void) {
     return pagesize;
 }
 
-GNU_FORCE_EXTERN
+// May be overriden by an architecture-specific implementation.
+__attribute__((weak)) GNU_FORCE_EXTERN
 void* memset(void* s, int c, size_t n) {
     unsigned char* sptr = s;
     for (; n > 0; n--, sptr++)

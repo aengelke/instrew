@@ -1,4 +1,4 @@
-sources = files(
+sources = [
     'dispatch.c',
     'elf-loader.c',
     'emulate.c',
@@ -8,7 +8,13 @@ sources = files(
     'minilibc.c',
     'rtld.c',
     'translator.c',
-)
+]
+
+if host_machine.cpu_family() == 'aarch64'
+  sources += [
+    'memset-aarch64.S'
+  ]
+endif
 
 client_c_args = ['-D_GNU_SOURCE', '-nostdlib', '-fno-builtin',
                  '-fno-stack-protector', '-fomit-frame-pointer', '-fPIC']
@@ -21,7 +27,7 @@ else
   client_link_args += ['-Wl,-static', '-Wl,-pie', '-Wl,--no-dynamic-linker', '-Wl,-z,text']
 endif
 
-if cc.get_define('__x86_64__') == '1'
+if host_machine.cpu_family() == 'x86_64'
   if cc.has_argument('-mpreferred-stack-boundary=3')
     client_c_args += ['-mpreferred-stack-boundary=3']
   else
