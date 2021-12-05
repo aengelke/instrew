@@ -284,6 +284,32 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     auto linkage = fn->getLinkage();
 
     switch (cc) {
+    case CallConv::X86_AARCH64_X: {
+        static const SptrField aapcsx_fields[] = {
+            { 0x00,  8,  0,  0  },
+        };
+        static const constexpr SptrFieldMap aapcsx_fieldmap = CreateSptrMap(aapcsx_fields);
+        fields = aapcsx_fields;
+        fieldmap = &aapcsx_fieldmap;
+        ret_ty = llvm::StructType::get(i64);
+        fn_ty = llvm::FunctionType::get(ret_ty, {i64, sptr_ty}, false);
+
+        nfn = llvm::Function::Create(fn_ty, linkage, fn->getName() + "_aapcsx", mod);
+        nfn->copyAttributesFrom(fn);
+        llvm::AttributeList al = nfn->getAttributes();
+        al = al.addParamAttributes(ctx, 1, al.getParamAttributes(0));
+        nfn->setAttributes(al.removeParamAttributes(ctx, 0));
+        nfn->addParamAttr(1, llvm::Attribute::SwiftSelf);
+        sptr = &nfn->arg_begin()[1];
+
+        if (call_fn_cdecl) {
+            tail_fn = llvm::cast<llvm::Function>(mod->getOrInsertFunction("instrew_quick_dispatch", fn_ty).getCallee());
+            tail_fn->copyAttributesFrom(nfn);
+            tail_fn->setDSOLocal(true);
+            call_fn = tail_fn;
+        }
+        break;
+    }
     case CallConv::X86_X86_RC: {
         static const SptrField rc_fields[] = {
             { 0x00,  8,  0,  0  },

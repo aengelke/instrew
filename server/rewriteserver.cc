@@ -302,6 +302,9 @@ int main(int argc, char** argv) {
         } else if (instrew_cfg.callconv == 3) {
             instrew_cc = CallConv::X86_X86_RC;
             client_config.tc_callconv = 2;
+        } else if (instrew_cfg.callconv == 5) {
+            instrew_cc = CallConv::X86_AARCH64_X;
+            client_config.tc_callconv = 3;
         }
 
         auto syscall_fn = CreateFunc(ctx, "syscall");

@@ -342,6 +342,120 @@ dispatch_hhvm:
 
 #endif // defined(__x86_64__)
 
+#if defined(__aarch64__)
+
+void dispatch_aapcsx();
+void dispatch_aapcsx_fullresolve();
+void dispatch_aapcsx_loop();
+
+ASM_BLOCK(
+    .align 16;
+    .global dispatch_aapcsx;
+    .type dispatch_aapcsx, @function;
+dispatch_aapcsx:
+    add x17, x20, -CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET;
+    and x16, x0, ((1 << QUICK_TLB_BITS) - 1) << QUICK_TLB_BITOFF;
+    add x17, x17, x16, lsl (4-QUICK_TLB_BITOFF);
+    ldp x16, x17, [x17];
+    cmp x16, x0;
+    b.ne 1f;
+    br x17;
+1:  mov x16, xzr; // zero dispatch data
+    b dispatch_aapcsx_fullresolve;
+    .size dispatch_aapcsx, .-dispatch_aapcsx;
+
+    .align 16;
+    .type dispatch_aapcsx_loop, @function;
+dispatch_aapcsx_loop:
+    mov x20, x0; // reg_data
+    ldr x0, [x0]; // addr
+    b 2f;
+
+    .align 16;
+1:  blr x17;
+2:  add x17, x20, -CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET;
+    and x16, x0, ((1 << QUICK_TLB_BITS) - 1) << QUICK_TLB_BITOFF;
+    add x17, x17, x16, lsl (4-QUICK_TLB_BITOFF);
+    ldp x16, x17, [x17];
+    cmp x16, x0;
+    b.eq 1b;
+
+    mov x16, xzr; // zero patch data
+    bl dispatch_aapcsx_fullresolve;
+    b 2b;
+    .size dispatch_aapcsx_loop, .-dispatch_aapcsx_loop;
+
+    .align 16;
+    .global dispatch_aapcsx_fullresolve;
+    .type dispatch_aapcsx_fullresolve, @function;
+dispatch_aapcsx_fullresolve:
+    sub sp, sp, 0x2b0;
+    stp x18, x30, [sp];
+    stp x0, x1, [sp, 0x10];
+    stp x2, x3, [sp, 0x20];
+    stp x4, x5, [sp, 0x30];
+    stp x6, x7, [sp, 0x40];
+    stp x8, x9, [sp, 0x50];
+    stp x10, x11, [sp, 0x60];
+    stp x12, x13, [sp, 0x70];
+    stp x14, x15, [sp, 0x80];
+    stp q0, q1, [sp, 0x90];
+    stp q2, q3, [sp, 0xb0];
+    stp q4, q5, [sp, 0xd0];
+    stp q6, q7, [sp, 0xf0];
+    stp q6, q7, [sp, 0x110];
+    stp q8, q9, [sp, 0x130];
+    stp q10, q11, [sp, 0x150];
+    stp q12, q13, [sp, 0x170];
+    stp q14, q15, [sp, 0x190];
+    stp q16, q17, [sp, 0x1b0];
+    stp q18, q19, [sp, 0x1d0];
+    stp q20, q21, [sp, 0x1f0];
+    stp q22, q23, [sp, 0x210];
+    stp q24, q25, [sp, 0x230];
+    stp q26, q27, [sp, 0x250];
+    stp q28, q29, [sp, 0x270];
+    stp q30, q31, [sp, 0x290];
+
+    mov x1, x0; // addr
+    sub x0, x20, CPU_STATE_REGDATA_OFFSET; // cpu_state
+    mov x2, x16; // patch_data
+    bl resolve_func;
+    mov x16, x0;
+
+    ldp x18, x30, [sp];
+    ldp x0, x1, [sp, 0x10];
+    ldp x2, x3, [sp, 0x20];
+    ldp x4, x5, [sp, 0x30];
+    ldp x6, x7, [sp, 0x40];
+    ldp x8, x9, [sp, 0x50];
+    ldp x10, x11, [sp, 0x60];
+    ldp x12, x13, [sp, 0x70];
+    ldp x14, x15, [sp, 0x80];
+    ldp q0, q1, [sp, 0x90];
+    ldp q2, q3, [sp, 0xb0];
+    ldp q4, q5, [sp, 0xd0];
+    ldp q6, q7, [sp, 0xf0];
+    ldp q6, q7, [sp, 0x110];
+    ldp q8, q9, [sp, 0x130];
+    ldp q10, q11, [sp, 0x150];
+    ldp q12, q13, [sp, 0x170];
+    ldp q14, q15, [sp, 0x190];
+    ldp q16, q17, [sp, 0x1b0];
+    ldp q18, q19, [sp, 0x1d0];
+    ldp q20, q21, [sp, 0x1f0];
+    ldp q22, q23, [sp, 0x210];
+    ldp q24, q25, [sp, 0x230];
+    ldp q26, q27, [sp, 0x250];
+    ldp q28, q29, [sp, 0x270];
+    ldp q30, q31, [sp, 0x290];
+    add sp, sp, 0x2b0;
+    br x16;
+    .size dispatch_aapcsx_fullresolve, .-dispatch_aapcsx_fullresolve;
+);
+
+#endif // defined(__aarch64__)
+
 const struct DispatcherInfo*
 dispatch_get(struct State* state) {
     static const struct DispatcherInfo infos[] = {
@@ -365,6 +479,14 @@ dispatch_get(struct State* state) {
             .patch_data_reg = 11, // r11
         },
 #endif // defined(__x86_64__)
+#if defined(__aarch64__)
+        [3] = {
+            .loop_func = dispatch_aapcsx_loop,
+            .quick_dispatch_func = dispatch_aapcsx,
+            .full_dispatch_func = dispatch_aapcsx_fullresolve,
+            .patch_data_reg = 16, // x16
+        },
+#endif // defined(__aarch64__)
     };
 
     unsigned callconv = state->tc.tc_callconv;
