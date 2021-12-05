@@ -525,6 +525,10 @@ int main(int argc, char** argv) {
             for (const auto& helper_fn : helper_fns)
                 if (helper_fn->user_empty())
                     helper_fn->removeFromParent();
+            // Remove dead prototypes, they add up to the compile time.
+            for (auto& glob_fn : llvm::make_early_inc_range(mod))
+                if (glob_fn.isDeclaration() && glob_fn.use_empty())
+                    glob_fn.eraseFromParent();
 
             if (tool.Optimize())
                 optimizer.Optimize(fn);
