@@ -38,6 +38,7 @@ print_trace(struct CpuState* cpu_state, uintptr_t addr) {
 #define QUICK_TLB_IDXSCALE (1 << (4-QUICK_TLB_BITOFF))
 #define QUICK_TLB_HASH(addr) (((addr) >> QUICK_TLB_BITOFF) & ((1 << QUICK_TLB_BITS) - 1))
 
+GNU_FORCE_EXTERN
 uintptr_t
 resolve_func(struct CpuState* cpu_state, uintptr_t addr,
              struct RtldPatchData* patch_data) {

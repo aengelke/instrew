@@ -1,11 +1,16 @@
 project('instrew', ['c', 'cpp'],
         default_options: [
             'buildtype=debugoptimized',
+            'default_library=static',
             'warning_level=3',
             'c_std=c11',
             'cpp_std=c++17',
-        ])
+        ],
+        meson_version: '>=0.49')
 
+if host_machine.endian() != 'little'
+  error('cannot compile for non-little-endian machine')
+endif
 
 add_project_arguments(['-Wmissing-field-initializers',
                        '-Wunused-parameter',
@@ -24,7 +29,16 @@ add_project_arguments(['-Wmissing-field-initializers',
 
 add_global_arguments(['-fno-rtti'], language: 'cpp')
 
-libllvm = dependency('llvm', version: ['>=8', '<12'])
+llvm_version = ['>=8', '<12']
+# First, attempt to use the shared library.
+libllvm = dependency('llvm', version: llvm_version, static: false,
+                     method: 'config-tool', required: false)
+if not libllvm.found()
+  # Try static libraries.
+  libllvm = dependency('llvm', version: llvm_version, static: true,
+                       method: 'config-tool',
+                       modules: ['x86', 'aarch64', 'riscv', 'analysis', 'passes'])
+endif
 
 rellume = subproject('rellume')
 librellume = rellume.get_variable('librellume')
