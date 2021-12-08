@@ -370,6 +370,13 @@ dispatch_aapcsx:
 dispatch_aapcsx_loop:
     mov x20, x0; // reg_data
     ldr x0, [x0]; // addr
+    ldr x1, [x20, 0x8];
+    ldr x2, [x20, 0x10];
+    ldr x3, [x20, 0x18];
+    ldr x4, [x20, 0x20];
+    ldr x5, [x20, 0x28];
+    ldr x6, [x20, 0x38];
+    ldr x7, [x20, 0x40];
     b 2f;
 
     .align 16;

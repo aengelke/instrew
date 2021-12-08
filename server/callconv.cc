@@ -287,20 +287,28 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     case CallConv::X86_AARCH64_X: {
         static const SptrField aapcsx_fields[] = {
             { 0x00,  8,  0,  0  },
+            { 0x08,  8,  1,  1  },
+            { 0x10,  8,  2,  2  },
+            { 0x18,  8,  3,  3  },
+            { 0x20,  8,  4,  4  },
+            { 0x28,  8,  5,  5  },
+            { 0x38,  8,  6,  6  },
+            { 0x40,  8,  7,  7  },
         };
         static const constexpr SptrFieldMap aapcsx_fieldmap = CreateSptrMap(aapcsx_fields);
         fields = aapcsx_fields;
         fieldmap = &aapcsx_fieldmap;
-        ret_ty = llvm::StructType::get(i64);
-        fn_ty = llvm::FunctionType::get(ret_ty, {i64, sptr_ty}, false);
+        ret_ty = llvm::StructType::get(i64, i64, i64, i64, i64, i64, i64, i64);
+        fn_ty = llvm::FunctionType::get(ret_ty,
+                {i64, i64, i64, i64, i64, i64, i64, i64, sptr_ty}, false);
 
         nfn = llvm::Function::Create(fn_ty, linkage, fn->getName() + "_aapcsx", mod);
         nfn->copyAttributesFrom(fn);
         llvm::AttributeList al = nfn->getAttributes();
-        al = al.addParamAttributes(ctx, 1, al.getParamAttributes(0));
+        al = al.addParamAttributes(ctx, 8, al.getParamAttributes(0));
         nfn->setAttributes(al.removeParamAttributes(ctx, 0));
-        nfn->addParamAttr(1, llvm::Attribute::SwiftSelf);
-        sptr = &nfn->arg_begin()[1];
+        nfn->addParamAttr(8, llvm::Attribute::SwiftSelf);
+        sptr = &nfn->arg_begin()[8];
 
         if (call_fn_cdecl) {
             tail_fn = llvm::cast<llvm::Function>(mod->getOrInsertFunction("instrew_quick_dispatch", fn_ty).getCallee());
