@@ -262,11 +262,16 @@ emulate_syscall(uint64_t* cpu_regs) {
     case 72: // fcntl
         switch (arg0) {
         case F_DUPFD:
+        case F_DUPFD_CLOEXEC:
         case F_GETFD:
         case F_SETFD:
         case F_GETFL:
         case F_SETFL:
-        case F_GETLK: nr = __NR_fcntl; goto native;
+        case F_SETLK: // note: uses struct flock*
+        case F_SETLKW: // note: uses struct flock*
+        case F_GETLK: // note: uses struct flock*
+            nr = __NR_fcntl;
+            goto native;
         default: goto unhandled;
         }
 
@@ -352,11 +357,16 @@ emulate_rv64_syscall(uint64_t* cpu_regs) {
     case 25: // fcntl
         switch (arg0) {
         case F_DUPFD:
+        case F_DUPFD_CLOEXEC:
         case F_GETFD:
         case F_SETFD:
         case F_GETFL:
         case F_SETFL:
-        case F_GETLK: nr = __NR_fcntl; goto native;
+        case F_SETLK: // note: uses struct flock*
+        case F_SETLKW: // note: uses struct flock*
+        case F_GETLK: // note: uses struct flock*
+            nr = __NR_fcntl;
+            goto native;
         default: goto unhandled;
         }
     case 29: nr = __NR_ioctl; goto native; // TODO: catch dangerous commands
