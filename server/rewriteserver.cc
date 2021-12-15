@@ -33,8 +33,7 @@
 #define SPTR_ADDR_SPACE 1
 
 static llvm::Function* CreateFunc(llvm::LLVMContext& ctx,
-                                  const std::string name, bool hhvm = false,
-                                  bool external = true) {
+                                  const std::string name, bool hhvm = false) {
     llvm::Type* sptr = llvm::Type::getInt8PtrTy(ctx, SPTR_ADDR_SPACE);
 
     llvm::FunctionType* fn_ty;
@@ -53,25 +52,13 @@ static llvm::Function* CreateFunc(llvm::LLVMContext& ctx,
         sptr_idx = 1;
     }
 
-    auto linkage = external ? llvm::GlobalValue::ExternalLinkage
-                            : llvm::GlobalValue::PrivateLinkage;
+    auto linkage = llvm::GlobalValue::ExternalLinkage;
     auto fn = llvm::Function::Create(fn_ty, linkage, name);
     fn->setCallingConv(hhvm ? llvm::CallingConv::HHVM : llvm::CallingConv::C);
     fn->addParamAttr(sptr_idx, llvm::Attribute::NoAlias);
     fn->addParamAttr(sptr_idx, llvm::Attribute::NoCapture);
     fn->addParamAttr(sptr_idx, llvm::Attribute::get(ctx, llvm::Attribute::Alignment, 16));
 
-    return fn;
-}
-
-static llvm::Function* CreateNoopFn(llvm::LLVMContext& ctx) {
-    llvm::Function* fn = CreateFunc(ctx, "noop_stub", /*hhvm=*/false,
-                                    /*external=*/false);
-    fn->addFnAttr(llvm::Attribute::AlwaysInline);
-
-    llvm::BasicBlock* bb = llvm::BasicBlock::Create(ctx, "", fn);
-    llvm::IRBuilder<> irb(bb);
-    irb.CreateRetVoid();
     return fn;
 }
 
@@ -259,9 +246,8 @@ int main(int argc, char** argv) {
     llvm::LLVMContext ctx;
 
     llvm::SmallVector<llvm::Function*, 8> helper_fns;
-    llvm::SmallVector<llvm::Function*, 2> lift_fns;
 
-    // This isn't added to lift_fns, here! Only, when the tool requires it.
+    // This isn't added to helper_fns, here! Only, when the tool requires it.
     auto marker_fn = CreateMarkerFn(ctx);
 
     // Create rellume config
@@ -357,7 +343,7 @@ int main(int argc, char** argv) {
         if (tool.Init(instrew_cfg, &init_mod) != 0)
             return 1;
         if (tool.MarkInstrs()) {
-            lift_fns.push_back(marker_fn);
+            helper_fns.push_back(marker_fn);
             marker_fn->removeFromParent();
             ll_config_set_instr_marker(rlcfg, llvm::wrap(marker_fn));
         } else {
@@ -454,9 +440,6 @@ int main(int argc, char** argv) {
             if (instrew_cfg.profile)
                 time_lifting_start = std::chrono::steady_clock::now();
 
-            for (const auto& lift_fn : lift_fns)
-                mod.getFunctionList().push_back(lift_fn);
-
             // Optionally generate position-independent code, where the offset
             // can be adjusted using relocations. For now, this is always zero.
             if (instrew_cfg.pic)
@@ -498,12 +481,6 @@ int main(int argc, char** argv) {
 
             fn = tool.Instrument(fn);
 
-            // Remove functions required for lifting before optimization. This
-            // includes the instr marker, which will either get optimized away,
-            // or be passed to code generation, causing compilation failure.
-            for (auto* lift_fn : lift_fns)
-                lift_fn->removeFromParent();
-
             fn = ChangeCallConv(fn, instrew_cc);
 
             if (instrew_cfg.profile)
@@ -521,10 +498,6 @@ int main(int argc, char** argv) {
             if (instrew_cfg.profile)
                 time_llvm_opt_start = std::chrono::steady_clock::now();
 
-            // Remove unused helper functions to prevent erasure during opt.
-            for (const auto& helper_fn : helper_fns)
-                if (helper_fn->user_empty())
-                    helper_fn->removeFromParent();
             // Remove dead prototypes, they add up to the compile time.
             for (auto& glob_fn : llvm::make_early_inc_range(mod))
                 if (glob_fn.isDeclaration() && glob_fn.use_empty())
@@ -555,7 +528,6 @@ int main(int argc, char** argv) {
             // Print IR after all optimizations are done
             if (instrew_cfg.dumpir & 8)
                 mod.print(llvm::errs(), nullptr);
-                // fn->print(llvm::errs());
 
             ////////////////////////////////////////////////////////////////////
             // STEP 5: send object file to the client, and clean-up.
