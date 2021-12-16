@@ -12,10 +12,10 @@ struct InstrewConfig;
 
 class Optimizer {
 private:
-    InstrewConfig& instrew_cfg;
+    const InstrewConfig& instrew_cfg;
 
 public:
-    Optimizer(InstrewConfig& instrew_cfg) : instrew_cfg(instrew_cfg) {}
+    Optimizer(const InstrewConfig& instrew_cfg) : instrew_cfg(instrew_cfg) {}
 
     void Optimize(llvm::Function* fn);
 };

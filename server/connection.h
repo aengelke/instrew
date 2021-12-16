@@ -7,42 +7,45 @@
 #include <cstdint>
 
 
-namespace Msg {
-    enum Id {
-#define INSTREW_MESSAGE_ID(id, name) name = id,
+struct IWServerConfig {
+#define INSTREW_SERVER_CONF
+#define INSTREW_SERVER_CONF_INT32(id, name, default) \
+    int32_t tsc_ ## name;
 #include "instrew-protocol.inc"
-#undef INSTREW_MESSAGE_ID
-    };
-}
+#undef INSTREW_SERVER_CONF
+#undef INSTREW_SERVER_CONF_INT32
+} __attribute__((packed));
 
-class Conn {
-private:
-    std::FILE* file_rd;
-    std::FILE* file_wr;
-    ssize_t remaining_sz;
+struct IWClientConfig {
+#define INSTREW_CLIENT_CONF
+#define INSTREW_CLIENT_CONF_INT32(id, name) \
+    int32_t tc_ ## name = 0;
+#include "instrew-protocol.inc"
+#undef INSTREW_CLIENT_CONF
+#undef INSTREW_CLIENT_CONF_INT32
+} __attribute__((packed));
 
-public:
-    Conn() : file_rd(stdin), file_wr(stdout), remaining_sz(0) { }
+typedef struct IWConnection IWConnection;
 
-    Msg::Id RecvMsg();
-
-    std::size_t Remaining() {
-        return remaining_sz;
-    }
-
-    void Read(void* buf, size_t size);
-    template<typename T>
-    T Read() {
-        T t;
-        Read(&t, sizeof(t));
-        return t;
-    }
-
-    void SendMsg(Msg::Id id, const void* buf, size_t size);
-    template<typename T>
-    void SendMsg(Msg::Id id, const T& val) {
-        SendMsg(id, &val, sizeof(T));
-    }
+struct IWObject {
+    const void* data;
+    size_t size;
 };
+
+const struct IWServerConfig* iw_get_sc(IWConnection* iwc);
+struct IWClientConfig* iw_get_cc(IWConnection* iwc);
+void iw_set_dumpobj(IWConnection* iwc, bool dumpobj);
+size_t iw_readmem(IWConnection* iwc, uintptr_t addr, size_t len, uint8_t* buf);
+
+typedef struct IWState IWState;
+
+struct IWFunctions {
+    struct IWState* (* init)(IWConnection* iwc, unsigned argc,
+                             const char* const* argv);
+    struct IWObject (* translate)(IWState* state, uintptr_t addr);
+    void (* finalize)(IWState* state);
+};
+
+int iw_run_server(const struct IWFunctions* fns, int argc, char** argv);
 
 #endif

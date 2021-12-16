@@ -1,6 +1,7 @@
 
 #include "codegenerator.h"
 
+#include "connection.h"
 #include "config.h"
 
 #include <llvm/ADT/SmallVector.h>
@@ -26,7 +27,7 @@ private:
     llvm::legacy::PassManager mc_pass_manager;
 
 public:
-    impl(const ServerConfig& server_config, const InstrewConfig& cfg,
+    impl(const IWServerConfig& server_config, const InstrewConfig& cfg,
          llvm::SmallVectorImpl<char> &o)
             : obj_buffer(o), obj_stream(o), mc_ctx(nullptr), mc_pass_manager() {
         llvm::InitializeNativeTarget();
@@ -83,7 +84,7 @@ public:
     }
 };
 
-CodeGenerator::CodeGenerator(const ServerConfig& sc, const InstrewConfig& ic,
+CodeGenerator::CodeGenerator(const IWServerConfig& sc, const InstrewConfig& ic,
                              llvm::SmallVectorImpl<char>& o)
         : pimpl{std::make_unique<impl>(sc, ic, o)} {}
 CodeGenerator::~CodeGenerator() {}

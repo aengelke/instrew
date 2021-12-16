@@ -33,42 +33,12 @@
 #define SPTR_ADDR_SPACE 1
 
 static llvm::Function* CreateFunc(llvm::LLVMContext& ctx,
-                                  const std::string name, bool hhvm = false) {
+                                  const std::string name) {
     llvm::Type* sptr = llvm::Type::getInt8PtrTy(ctx, SPTR_ADDR_SPACE);
-
-    llvm::FunctionType* fn_ty;
-    unsigned sptr_idx;
-    if (!hhvm) {
-        llvm::Type* void_ty = llvm::Type::getVoidTy(ctx);
-        fn_ty = llvm::FunctionType::get(void_ty, {sptr}, false);
-        sptr_idx = 0;
-    } else {
-        llvm::Type* i64 = llvm::Type::getInt64Ty(ctx);
-        auto ret_ty = llvm::StructType::get(i64, i64, i64, i64, i64, i64, i64,
-                                            i64, i64, i64, i64, i64, i64, i64);
-        fn_ty = llvm::FunctionType::get(ret_ty, {i64, sptr, i64, i64, i64, i64,
-                                                 i64, i64, i64, i64, i64, i64,
-                                                 i64, i64}, false);
-        sptr_idx = 1;
-    }
-
+    llvm::Type* void_ty = llvm::Type::getVoidTy(ctx);
+    auto* fn_ty = llvm::FunctionType::get(void_ty, {sptr}, false);
     auto linkage = llvm::GlobalValue::ExternalLinkage;
-    auto fn = llvm::Function::Create(fn_ty, linkage, name);
-    fn->setCallingConv(hhvm ? llvm::CallingConv::HHVM : llvm::CallingConv::C);
-    fn->addParamAttr(sptr_idx, llvm::Attribute::NoAlias);
-    fn->addParamAttr(sptr_idx, llvm::Attribute::NoCapture);
-    fn->addParamAttr(sptr_idx, llvm::Attribute::get(ctx, llvm::Attribute::Alignment, 16));
-
-    return fn;
-}
-
-static llvm::Function* CreateMarkerFn(llvm::LLVMContext& ctx) {
-    auto marker_fn_ty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
-            {llvm::Type::getInt64Ty(ctx), llvm::Type::getMetadataTy(ctx)},
-            false);
-    return llvm::Function::Create(marker_fn_ty,
-                                  llvm::GlobalValue::PrivateLinkage,
-                                  "instrew_instr_marker");
+    return llvm::Function::Create(fn_ty, linkage, name);
 }
 
 static llvm::GlobalVariable* CreatePcBase(llvm::LLVMContext& ctx) {
@@ -82,64 +52,6 @@ static llvm::GlobalVariable* CreatePcBase(llvm::LLVMContext& ctx) {
     pc_base_var->setMetadata("absolute_symbol", node);
     return pc_base_var;
 }
-
-class RemoteMemory {
-private:
-    const static size_t PAGE_SIZE = 0x1000;
-    using Page = std::array<uint8_t, PAGE_SIZE>;
-    std::unordered_map<uint64_t, std::unique_ptr<Page>> page_cache;
-    Conn& conn;
-
-public:
-    RemoteMemory(Conn& c) : conn(c) {}
-
-private:
-    Page* GetPage(size_t page_addr) {
-        const auto& page_it = page_cache.find(page_addr);
-        if (page_it != page_cache.end())
-            return page_it->second.get();
-
-        struct { uint64_t addr; size_t buf_sz; } send_buf{page_addr, PAGE_SIZE};
-        conn.SendMsg(Msg::S_MEMREQ, send_buf);
-
-        Msg::Id msgid = conn.RecvMsg();
-        std::size_t msgsz = conn.Remaining();
-
-        // Sanity checks.
-        if (msgid != Msg::C_MEMBUF)
-            return nullptr;
-        if (msgsz != PAGE_SIZE + 1)
-            return nullptr;
-
-        auto page = std::make_unique<Page>();
-        conn.Read(page->data(), page->size());
-
-        uint8_t failed = conn.Read<uint8_t>();
-        if (failed)
-            return nullptr;
-
-        page_cache[page_addr] = std::move(page);
-
-        return page_cache[page_addr].get();
-    };
-
-public:
-    size_t Get(size_t start, size_t end, uint8_t* buf) {
-        size_t start_page = start & ~(PAGE_SIZE - 1);
-        size_t end_page = end & ~(PAGE_SIZE - 1);
-        size_t bytes_written = 0;
-        for (size_t cur = start_page; cur <= end_page; cur += PAGE_SIZE) {
-            Page* page = GetPage(cur);
-            if (!page)
-                break;
-            size_t start_off = cur < start ? (start & (PAGE_SIZE - 1)) : 0;
-            size_t end_off = cur + PAGE_SIZE > end ? (end & (PAGE_SIZE - 1)) : PAGE_SIZE;
-            std::copy(page->data() + start_off, page->data() + end_off, buf + bytes_written);
-            bytes_written += end_off - start_off;
-        }
-        return bytes_written;
-    }
-};
 
 class InstrumenterTool {
 private:
@@ -205,350 +117,246 @@ public:
     }
 };
 
-int main(int argc, char** argv) {
-    InstrewConfig instrew_cfg{argc - 1, argv + 1};
 
-    // Set stdio to unbuffered
-    std::setbuf(stdin, nullptr);
-    std::setbuf(stdout, nullptr);
+struct IWState {
+private:
+    IWConnection* iwc;
+    const IWServerConfig* iwsc = nullptr;
+    IWClientConfig* iwcc = nullptr;
+    const InstrewConfig instrew_cfg;
+    CallConv instrew_cc = CallConv::CDECL;
 
-    // Measured times
+    LLConfig* rlcfg;
+    llvm::LLVMContext ctx;
+    llvm::Constant* pc_base;
+    llvm::SmallVector<llvm::Function*, 8> helper_fns;
+    std::unique_ptr<llvm::Module> mod;
+
+    InstrumenterTool tool;
+
+    Optimizer optimizer;
+    llvm::SmallVector<char, 4096> obj_buffer;
+    CodeGenerator codegen;
+
     std::chrono::steady_clock::duration dur_lifting{};
     std::chrono::steady_clock::duration dur_instrument{};
     std::chrono::steady_clock::duration dur_llvm_opt{};
     std::chrono::steady_clock::duration dur_llvm_codegen{};
 
-    Conn conn; // uses stdio
+public:
 
-    // TODO: integrate into server_config.
-    CallConv instrew_cc = CallConv::CDECL;
+    IWState(IWConnection* iwc, unsigned argc, const char* const* argv)
+            : instrew_cfg(argc - 1, argv + 1), optimizer(instrew_cfg),
+              codegen(*iw_get_sc(iwc), instrew_cfg, obj_buffer) {
+        this->iwc = iwc;
+        iwsc = iw_get_sc(iwc);
+        iwcc = iw_get_cc(iwc);
 
-    if (conn.RecvMsg() != Msg::C_INIT) {
-        std::cerr << "error: expected C_INIT message" << std::endl;
-        return 1;
-    }
-    ServerConfig server_config = conn.Read<ServerConfig>();
-    ClientConfig client_config;
+        iw_set_dumpobj(iwc, instrew_cfg.dumpobj);
 
-    RemoteMemory remote_memory(conn);
+        llvm::cl::ParseEnvironmentOptions(argv[0], "INSTREW_SERVER_LLVM_OPTS");
+        llvm::TimePassesIsEnabled = instrew_cfg.timepasses;
 
-    llvm::cl::ParseEnvironmentOptions(argv[0], "INSTREW_SERVER_LLVM_OPTS");
-    llvm::TimePassesIsEnabled = instrew_cfg.timepasses;
-
-    // Initialize optimizer according to configuration
-    Optimizer optimizer(instrew_cfg);
-
-    // Create code generator to write code into our buffer
-    llvm::SmallVector<char, 4096> obj_buffer;
-    CodeGenerator codegen(server_config, instrew_cfg, obj_buffer);
-
-    // Create module, functions will be deleted after code generation.
-    llvm::LLVMContext ctx;
-
-    llvm::SmallVector<llvm::Function*, 8> helper_fns;
-
-    // This isn't added to helper_fns, here! Only, when the tool requires it.
-    auto marker_fn = CreateMarkerFn(ctx);
-
-    // Create rellume config
-    LLConfig* rlcfg = ll_config_new();
-    ll_config_enable_verify_ir(rlcfg, false);
-    ll_config_set_call_ret_clobber_flags(rlcfg, !instrew_cfg.safecallret);
-    ll_config_enable_full_facets(rlcfg, instrew_cfg.fullfacets);
-    ll_config_set_position_independent_code(rlcfg, false);
-    ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
-    ll_config_enable_overflow_intrinsics(rlcfg, false);
-    if (instrew_cfg.callret) {
-        if (server_config.tsc_guest_arch == EM_X86_64 &&
-            instrew_cfg.callconv == 1 /* hhvmrl*/) {
-            auto tail_fn = CreateFunc(ctx, "instrew_tail_hhvm", /*hhvm=*/true);
-            auto call_fn = CreateFunc(ctx, "instrew_call_hhvm", /*hhvm=*/true);
-            helper_fns.push_back(tail_fn);
-            helper_fns.push_back(call_fn);
-            ll_config_set_tail_func(rlcfg, llvm::wrap(tail_fn));
-            ll_config_set_call_func(rlcfg, llvm::wrap(call_fn));
-        } else {
-            auto call_fn = CreateFunc(ctx, "instrew_call_cdecl", /*hhvm=*/false);
+        rlcfg = ll_config_new();
+        ll_config_enable_verify_ir(rlcfg, false);
+        ll_config_set_call_ret_clobber_flags(rlcfg, !instrew_cfg.safecallret);
+        ll_config_enable_full_facets(rlcfg, instrew_cfg.fullfacets);
+        ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
+        ll_config_enable_overflow_intrinsics(rlcfg, false);
+        if (instrew_cfg.callret) {
+            auto call_fn = CreateFunc(ctx, "instrew_call_cdecl");
             helper_fns.push_back(call_fn);
             ll_config_set_tail_func(rlcfg, llvm::wrap(call_fn));
             ll_config_set_call_func(rlcfg, llvm::wrap(call_fn));
         }
-    }
-    if (server_config.tsc_guest_arch == EM_X86_64) {
-        ll_config_set_architecture(rlcfg, "x86-64");
-        client_config.tc_callconv = 0; // cdecl
-        if (instrew_cfg.callconv == 1) {
-            // instrew_cc defaults to CDECL, where functions are not modified. We
-            // currently use this to let Rellume generate HHVMCC functions.
-            ll_config_set_hhvm(rlcfg, true);
-            client_config.tc_callconv = 1;
-        } else if (instrew_cfg.callconv == 2) {
-            instrew_cc = CallConv::HHVM;
-            client_config.tc_callconv = 1;
-        } else if (instrew_cfg.callconv == 3) {
-            instrew_cc = CallConv::X86_X86_RC;
-            client_config.tc_callconv = 2;
-        } else if (instrew_cfg.callconv == 5) {
-            instrew_cc = CallConv::X86_AARCH64_X;
-            client_config.tc_callconv = 3;
-        }
+        if (iwsc->tsc_guest_arch == EM_X86_64) {
+            ll_config_set_architecture(rlcfg, "x86-64");
+            iwcc->tc_callconv = 0; // cdecl
+            // TODO: check host arch
+            if (instrew_cfg.callconv == 2) {
+                instrew_cc = CallConv::HHVM;
+                iwcc->tc_callconv = 1;
+            } else if (instrew_cfg.callconv == 3) {
+                instrew_cc = CallConv::X86_X86_RC;
+                iwcc->tc_callconv = 2;
+            } else if (instrew_cfg.callconv == 5) {
+                instrew_cc = CallConv::X86_AARCH64_X;
+                iwcc->tc_callconv = 3;
+            }
 
-        auto syscall_fn = CreateFunc(ctx, "syscall");
-        helper_fns.push_back(syscall_fn);
-        ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
+            auto syscall_fn = CreateFunc(ctx, "syscall");
+            helper_fns.push_back(syscall_fn);
+            ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
 
-        // cpuinfo function is CPUID on x86-64.
-        llvm::Type* i32 = llvm::Type::getInt32Ty(ctx);
-        llvm::Type* i64 = llvm::Type::getInt64Ty(ctx);
-        auto i64_i64 = llvm::StructType::get(i64, i64);
-        auto cpuinfo_fn_ty = llvm::FunctionType::get(i64_i64, {i32, i32}, false);
-        auto linkage = llvm::GlobalValue::ExternalLinkage;
-        auto cpuinfo_fn = llvm::Function::Create(cpuinfo_fn_ty, linkage, "cpuid");
-        helper_fns.push_back(cpuinfo_fn);
-        ll_config_set_cpuinfo_func(rlcfg, llvm::wrap(cpuinfo_fn));
-    } else if (server_config.tsc_guest_arch == EM_RISCV) {
-        ll_config_set_architecture(rlcfg, "rv64");
-        if (server_config.tsc_host_arch == EM_X86_64 && instrew_cfg.callconv == 2) {
-            instrew_cc = CallConv::RV64_X86_HHVM;
-            client_config.tc_callconv = 1;
-        }
+            // cpuinfo function is CPUID on x86-64.
+            llvm::Type* i32 = llvm::Type::getInt32Ty(ctx);
+            llvm::Type* i64 = llvm::Type::getInt64Ty(ctx);
+            auto i64_i64 = llvm::StructType::get(i64, i64);
+            auto cpuinfo_fn_ty = llvm::FunctionType::get(i64_i64, {i32, i32}, false);
+            auto linkage = llvm::GlobalValue::ExternalLinkage;
+            auto cpuinfo_fn = llvm::Function::Create(cpuinfo_fn_ty, linkage, "cpuid");
+            helper_fns.push_back(cpuinfo_fn);
+            ll_config_set_cpuinfo_func(rlcfg, llvm::wrap(cpuinfo_fn));
+        } else if (iwsc->tsc_guest_arch == EM_RISCV) {
+            ll_config_set_architecture(rlcfg, "rv64");
+            if (iwsc->tsc_host_arch == EM_X86_64 && instrew_cfg.callconv == 2) {
+                instrew_cc = CallConv::RV64_X86_HHVM;
+                iwcc->tc_callconv = 1;
+            }
 
-        auto syscall_fn = CreateFunc(ctx, "syscall_rv64");
-        helper_fns.push_back(syscall_fn);
-        ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
-    } else {
-        std::cerr << "error: unsupported architecture" << std::endl;
-        return 1;
-    }
-
-    InstrumenterTool tool;
-    {
-        llvm::Module init_mod("mod", ctx);
-
-        for (const auto& helper_fn : helper_fns)
-            init_mod.getFunctionList().push_back(helper_fn);
-        init_mod.getFunctionList().push_back(marker_fn);
-
-        llvm::Type* i8p_ty = llvm::Type::getInt8PtrTy(ctx);
-        llvm::SmallVector<llvm::Constant*, 8> used;
-        for (const auto& helper_fn : helper_fns)
-            used.push_back(llvm::ConstantExpr::getPointerCast(helper_fn, i8p_ty));
-        llvm::ArrayType* used_ty = llvm::ArrayType::get(i8p_ty, used.size());
-        llvm::GlobalVariable* llvm_used = new llvm::GlobalVariable(
-                init_mod, used_ty, /*const=*/false,
-                llvm::GlobalValue::AppendingLinkage,
-                llvm::ConstantArray::get(used_ty, used), "llvm.used");
-        llvm_used->setSection("llvm.metadata");
-
-        if (tool.Init(instrew_cfg, &init_mod) != 0)
-            return 1;
-        if (tool.MarkInstrs()) {
-            helper_fns.push_back(marker_fn);
-            marker_fn->removeFromParent();
-            ll_config_set_instr_marker(rlcfg, llvm::wrap(marker_fn));
+            auto syscall_fn = CreateFunc(ctx, "syscall_rv64");
+            helper_fns.push_back(syscall_fn);
+            ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
         } else {
-            // Remove useless marker function if tool doesn't require it.
-            marker_fn->eraseFromParent();
+            std::cerr << "error: unsupported architecture" << std::endl;
+            abort();
         }
 
-        // Rename all tool-defined functions appropriately.
-        uint64_t zval_cnt = 1ull << 63;
-        for (llvm::Function& fn : init_mod.functions()) {
-            if (fn.empty())
-                continue;
-            std::stringstream namebuf;
-            namebuf << "Z" << std::oct << zval_cnt++ << "_";
-            fn.setName(llvm::Twine(namebuf.str() + fn.getName()));
-        }
+        llvm::GlobalVariable* pc_base_var = CreatePcBase(ctx);
+        pc_base = llvm::ConstantExpr::getPtrToInt(pc_base_var,
+                                                  llvm::Type::getInt64Ty(ctx));
 
-        // Send client configuration here. It must be sent before the first
-        // object, but only after the tool has been initialized as it might
-        // still want to change some options.
-        conn.SendMsg(Msg::S_INIT, &client_config, sizeof(client_config));
-
-        if (server_config.tsc_server_mode == 0) {
-            // Only do this if this is the "root translator", but not for forks.
-            codegen.GenerateCode(&init_mod);
-            conn.SendMsg(Msg::S_OBJECT, obj_buffer.data(), obj_buffer.size());
-
-            if (instrew_cfg.dumpobj) {
-                std::ofstream debug_out1;
-                debug_out1.open("func_init_mod.elf", std::ios::binary);
-                debug_out1.write(obj_buffer.data(), obj_buffer.size());
-                debug_out1.close();
-            }
-
-            for (llvm::Function& fn : init_mod.functions()) {
-                if (!fn.hasExternalLinkage() || fn.empty())
-                    continue;
-                fn.deleteBody();
-                helper_fns.push_back(&fn);
-            }
-
-            for (const auto& helper_fn : helper_fns)
-                helper_fn->removeFromParent();
-        }
-    }
-
-    llvm::GlobalVariable* pc_base_var = CreatePcBase(ctx);
-    llvm::Constant* pc_base = llvm::ConstantExpr::getPtrToInt(pc_base_var,
-                                                   llvm::Type::getInt64Ty(ctx));
-    llvm::Module mod("mod", ctx);
-    {
-        for (const auto& helper_fn : helper_fns)
-            mod.getFunctionList().push_back(helper_fn);
-
+        mod = std::make_unique<llvm::Module>("mod", ctx);
         llvm::Type* i8p_ty = llvm::Type::getInt8PtrTy(ctx);
         llvm::SmallVector<llvm::Constant*, 8> used;
+        mod->getGlobalList().push_back(pc_base_var);
         used.push_back(pc_base_var);
-        mod.getGlobalList().push_back(pc_base_var);
-        for (const auto& helper_fn : helper_fns)
+        for (const auto& helper_fn : helper_fns) {
+            mod->getFunctionList().push_back(helper_fn);
             used.push_back(llvm::ConstantExpr::getPointerCast(helper_fn, i8p_ty));
+        }
         llvm::ArrayType* used_ty = llvm::ArrayType::get(i8p_ty, used.size());
         llvm::GlobalVariable* llvm_used = new llvm::GlobalVariable(
-                mod, used_ty, /*const=*/false,
+                *mod, used_ty, /*const=*/false,
                 llvm::GlobalValue::AppendingLinkage,
                 llvm::ConstantArray::get(used_ty, used), "llvm.used");
         llvm_used->setSection("llvm.metadata");
+
+        // if (tool.Init(instrew_cfg, &mod) != 0)
+        //     abort();
+        // if (tool.MarkInstrs())
+        //     ll_config_set_instr_marker(rlcfg, llvm::wrap(marker_fn));
+
+        // // Rename all tool-defined functions appropriately.
+        // uint64_t zval_cnt = 1ull << 63;
+        // for (llvm::Function& fn : mod->functions()) {
+        //     if (fn.empty())
+        //         continue;
+        //     std::stringstream namebuf;
+        //     namebuf << "Z" << std::oct << zval_cnt++ << "_";
+        //     fn.setName(llvm::Twine(namebuf.str() + fn.getName()));
+        // }
+
+        // codegen.GenerateCode(mod);
+
+        // for (llvm::Function& fn : init_mod.functions()) {
+        //     if (!fn.hasExternalLinkage() || fn.empty())
+        //         continue;
+        //     fn.deleteBody();
+        //     helper_fns.push_back(&fn);
+        // }
     }
-
-    while (true) {
-        Msg::Id msgid = conn.RecvMsg();
-        if (msgid == Msg::C_EXIT) {
-            if (instrew_cfg.profile) {
-                std::cerr << "Server profile: "
-                          << std::chrono::duration_cast<std::chrono::milliseconds>(dur_lifting).count()
-                          << "ms lifting; "
-                          << std::chrono::duration_cast<std::chrono::milliseconds>(dur_instrument).count()
-                          << "ms instrumentation; "
-                          << std::chrono::duration_cast<std::chrono::milliseconds>(dur_llvm_opt).count()
-                          << "ms llvm_opt; "
-                          << std::chrono::duration_cast<std::chrono::milliseconds>(dur_llvm_codegen).count()
-                          << "ms llvm_codegen"
-                          << std::endl;
-            }
-            if (instrew_cfg.timepasses)
-                llvm::reportAndResetTimings(&llvm::errs());
-            return 0;
-        } else if (msgid == Msg::C_TRANSLATE) {
-            auto addr = conn.Read<uint64_t>();
-
-            ////////////////////////////////////////////////////////////////////
-            // STEP 1: lift function to LLVM-IR using Rellume.
-
-            std::chrono::steady_clock::time_point time_lifting_start;
-            if (instrew_cfg.profile)
-                time_lifting_start = std::chrono::steady_clock::now();
-
-            // Optionally generate position-independent code, where the offset
-            // can be adjusted using relocations. For now, this is always zero.
-            if (instrew_cfg.pic)
-                ll_config_set_pc_base(rlcfg, 0, llvm::wrap(pc_base));
-
-            LLFunc* rlfn = ll_func_new(llvm::wrap(&mod), rlcfg);
-            bool decode_fail = ll_func_decode_cfg(rlfn, addr,
-                [](size_t addr, uint8_t* buf, size_t buf_sz, void* user_arg) {
-                    auto* rm = static_cast<RemoteMemory*>(user_arg);
-                    return rm->Get(addr, addr + buf_sz, buf);
-                },
-                &remote_memory);
-            if (decode_fail) {
-                std::cerr << "error: could not decode at 0x" << std::hex << addr
-                          << std::endl;
-                return 1;
-            }
-            llvm::Function* fn = llvm::unwrap<llvm::Function>(ll_func_lift(rlfn));
-            ll_func_dispose(rlfn);
-
-            std::stringstream namebuf;
-            namebuf << "Z" << std::oct << addr << "_" << std::hex << addr;
-
-            fn->setName(namebuf.str());
-
-            if (instrew_cfg.profile)
-                dur_lifting += std::chrono::steady_clock::now() - time_lifting_start;
-
-            // Print IR before optimizations
-            if (instrew_cfg.dumpir & 1)
-                mod.print(llvm::errs(), nullptr);
-
-            ////////////////////////////////////////////////////////////////////
-            // STEP 2: perform instrumentation
-
-            std::chrono::steady_clock::time_point time_instrument_start;
-            if (instrew_cfg.profile)
-                time_instrument_start = std::chrono::steady_clock::now();
-
-            fn = tool.Instrument(fn);
-
-            fn = ChangeCallConv(fn, instrew_cc);
-
-            if (instrew_cfg.profile)
-                dur_instrument += std::chrono::steady_clock::now() - time_instrument_start;
-
-            // Print IR before target-specific transformations
-            if (instrew_cfg.dumpir & 2)
-                mod.print(llvm::errs(), nullptr);
-
-            ////////////////////////////////////////////////////////////////////
-            // STEP 3: optimize lifted LLVM-IR, optionally using the new pass
-            //   manager of LLVM
-
-            std::chrono::steady_clock::time_point time_llvm_opt_start;
-            if (instrew_cfg.profile)
-                time_llvm_opt_start = std::chrono::steady_clock::now();
-
-            // Remove dead prototypes, they add up to the compile time.
-            for (auto& glob_fn : llvm::make_early_inc_range(mod))
-                if (glob_fn.isDeclaration() && glob_fn.use_empty())
-                    glob_fn.eraseFromParent();
-
-            if (tool.Optimize())
-                optimizer.Optimize(fn);
-
-            if (instrew_cfg.profile)
-                dur_llvm_opt += std::chrono::steady_clock::now() - time_llvm_opt_start;
-
-            // Print IR before target-specific transformations
-            if (instrew_cfg.dumpir & 4)
-                mod.print(llvm::errs(), nullptr);
-
-            ////////////////////////////////////////////////////////////////////
-            // STEP 4: generate machine code
-
-            std::chrono::steady_clock::time_point time_llvm_codegen_start;
-            if (instrew_cfg.profile)
-                time_llvm_codegen_start = std::chrono::steady_clock::now();
-
-            codegen.GenerateCode(&mod);
-
-            if (instrew_cfg.profile)
-                dur_llvm_codegen += std::chrono::steady_clock::now() - time_llvm_codegen_start;
-
-            // Print IR after all optimizations are done
-            if (instrew_cfg.dumpir & 8)
-                mod.print(llvm::errs(), nullptr);
-
-            ////////////////////////////////////////////////////////////////////
-            // STEP 5: send object file to the client, and clean-up.
-
-            conn.SendMsg(Msg::S_OBJECT, obj_buffer.data(), obj_buffer.size());
-
-            if (instrew_cfg.dumpobj) {
-                std::stringstream debug_out1_name;
-                debug_out1_name << std::hex << "func_" << addr << ".elf";
-
-                std::ofstream debug_out1;
-                debug_out1.open(debug_out1_name.str(), std::ios::binary);
-                debug_out1.write(obj_buffer.data(), obj_buffer.size());
-                debug_out1.close();
-            }
-
-            fn->eraseFromParent();
-
-        } else {
-            std::cerr << "unexpected msg " << msgid << std::endl;
-            return 1;
+    ~IWState() {
+        if (instrew_cfg.profile) {
+            std::cerr << "Server profile: "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(dur_lifting).count()
+                      << "ms lifting; "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(dur_instrument).count()
+                      << "ms instrumentation; "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(dur_llvm_opt).count()
+                      << "ms llvm_opt; "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(dur_llvm_codegen).count()
+                      << "ms llvm_codegen"
+                      << std::endl;
         }
+        if (instrew_cfg.timepasses)
+            llvm::reportAndResetTimings(&llvm::errs());
     }
+
+private:
+    llvm::Function* Lift(uintptr_t addr) {
+        // Optionally generate position-independent code, where the offset
+        // can be adjusted using relocations. For now, this is always zero.
+        if (instrew_cfg.pic)
+            ll_config_set_pc_base(rlcfg, 0, llvm::wrap(pc_base));
+
+        LLFunc* rlfn = ll_func_new(llvm::wrap(mod.get()), rlcfg);
+        bool decode_fail = ll_func_decode_cfg(rlfn, addr,
+            [](size_t addr, uint8_t* buf, size_t buf_sz, void* user_arg) {
+                auto* iwc = static_cast<IWConnection*>(user_arg);
+                return iw_readmem(iwc, addr, addr + buf_sz, buf);
+            },
+            iwc);
+        if (decode_fail) {
+            std::cerr << "error: could not decode at 0x" << std::hex << addr
+                      << std::endl;
+            return nullptr;
+        }
+        llvm::Function* fn = llvm::unwrap<llvm::Function>(ll_func_lift(rlfn));
+        ll_func_dispose(rlfn);
+
+        std::stringstream namebuf;
+        namebuf << "Z" << std::oct << addr << "_" << std::hex << addr;
+        fn->setName(namebuf.str());
+
+        return fn;
+    }
+
+public:
+    IWObject Translate(uintptr_t addr) {
+        auto time_lifting_start = std::chrono::steady_clock::now();
+        llvm::Function* fn = Lift(addr);
+        if (!fn)
+            return IWObject{};
+        if (instrew_cfg.dumpir & 1)
+            mod->print(llvm::errs(), nullptr);
+
+        auto time_instrument_start = std::chrono::steady_clock::now();
+        fn = tool.Instrument(fn);
+        fn = ChangeCallConv(fn, instrew_cc);
+        if (instrew_cfg.dumpir & 2)
+            mod->print(llvm::errs(), nullptr);
+
+        auto time_llvm_opt_start = std::chrono::steady_clock::now();
+        optimizer.Optimize(fn);
+        if (instrew_cfg.dumpir & 4)
+            mod->print(llvm::errs(), nullptr);
+
+        auto time_llvm_codegen_start = std::chrono::steady_clock::now();
+        codegen.GenerateCode(mod.get());
+        if (instrew_cfg.dumpir & 8)
+            mod->print(llvm::errs(), nullptr);
+
+        // Remove unused functions and dead prototypes. Having many prototypes
+        // causes some compile-time overhead.
+        for (auto& glob_fn : llvm::make_early_inc_range(*mod))
+            if (glob_fn.use_empty())
+                glob_fn.eraseFromParent();
+
+        if (instrew_cfg.profile) {
+            dur_lifting += time_instrument_start - time_lifting_start;
+            dur_instrument += time_llvm_opt_start - time_instrument_start;
+            dur_llvm_opt += time_llvm_codegen_start - time_llvm_opt_start;
+            dur_llvm_codegen += std::chrono::steady_clock::now() - time_llvm_codegen_start;
+        }
+
+        return IWObject{obj_buffer.data(), obj_buffer.size()};
+    }
+};
+
+
+int main(int argc, char** argv) {
+    static const IWFunctions iwf = {
+        /*.init=*/[](IWConnection* iwc, unsigned argc, const char* const* argv) {
+            return new IWState(iwc, argc, argv);
+        },
+        /*.translate=*/[](IWState* state, uintptr_t addr) {
+            return state->Translate(addr);
+        },
+        /*.finalize=*/[](IWState* state) {
+            delete state;
+        },
+    };
+
+    return iw_run_server(&iwf, argc, argv);
 }

@@ -6,12 +6,12 @@
 #include <llvm/IR/Module.h>
 
 
-struct ServerConfig;
+struct IWServerConfig;
 struct InstrewConfig;
 
 class CodeGenerator {
 public:
-    CodeGenerator(const ServerConfig& server_config, const InstrewConfig&,
+    CodeGenerator(const IWServerConfig& server_config, const InstrewConfig&,
                   llvm::SmallVectorImpl<char> &o);
     ~CodeGenerator();
     void GenerateCode(llvm::Module* mod);
