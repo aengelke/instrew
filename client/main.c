@@ -201,10 +201,12 @@ int main(int argc, char** argv) {
         puts("error: could not get initial object");
         return retval;
     }
-    retval = rtld_add_object(&state.rtld, initobj, initobj_size);
-    if (retval < 0) {
-        puts("error: could not get initial object");
-        return retval;
+    if (initobj_size > 0) {
+        retval = rtld_add_object(&state.rtld, initobj, initobj_size);
+        if (retval < 0) {
+            puts("error: could not get initial object");
+            return retval;
+        }
     }
 
     struct CpuState* cpu_state = mem_alloc_data(sizeof(struct CpuState),
