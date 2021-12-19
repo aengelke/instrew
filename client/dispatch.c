@@ -44,6 +44,9 @@ resolve_func(struct CpuState* cpu_state, uintptr_t addr,
              struct RtldPatchData* patch_data) {
     struct State* state = cpu_state->state;
 
+    if (patch_data)
+        addr = patch_data->sym_addr;
+
     void* func;
     int retval = rtld_resolve(&state->rtld, addr, &func);
     if (UNLIKELY(retval < 0)) {

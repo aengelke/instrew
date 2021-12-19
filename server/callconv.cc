@@ -237,6 +237,7 @@ struct CCState {
                 tgt = llvm::cast<llvm::Function>(tgt->getParent()->getOrInsertFunction(namebuf.str(), tgt_ty).getCallee());
                 tgt->copyAttributesFrom(nfn);
                 tgt->setDSOLocal(true);
+                params[0] = llvm::UndefValue::get(tgt_cnst->getType());
             }
         nosubst:
 

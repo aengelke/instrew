@@ -25,7 +25,13 @@ struct Rtld {
 };
 typedef struct Rtld Rtld;
 
-struct RtldPatchData;
+struct RtldPatchData {
+    uint64_t sym_addr;
+    unsigned rel_type;
+    unsigned rel_size;
+    int64_t addend;
+    uintptr_t patch_addr;
+};
 
 int rtld_init(Rtld* r, int perfmap_fd, const struct DispatcherInfo* disp_info);
 int rtld_resolve(Rtld* r, uintptr_t addr, void** out_entry);
