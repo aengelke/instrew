@@ -40,12 +40,16 @@ public:
             target_options.StackAlignmentOverride = server_config.tsc_stack_alignment;
 
         std::string triple;
+        llvm::CodeModel::Model cm;
         switch (server_config.tsc_host_arch) {
         case EM_X86_64:
             triple = "x86_64-unknown-linux-gnu";
+            cm = cfg.pic ? llvm::CodeModel::Medium : llvm::CodeModel::Small;
             break;
         case EM_AARCH64:
             triple = "aarch64-unknown-linux-gnu";
+            // The AArch64 target doesn't support the medium code model.
+            cm = cfg.pic ? llvm::CodeModel::Large : llvm::CodeModel::Small;
             break;
         default:
             std::cerr << "unknown host architecture" << std::endl;
@@ -63,7 +67,7 @@ public:
             /*TT=*/triple, /*CPU=*/"",
             /*Features=*/"", /*Options=*/target_options,
             /*RelocModel=*/llvm::Reloc::Static,
-            /*CodeModel=*/llvm::CodeModel::Medium,
+            /*CodeModel=*/cm,
             /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(cfg.targetopt),
             /*JIT=*/true
         );
