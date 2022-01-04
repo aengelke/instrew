@@ -4,6 +4,7 @@ sources = files(
     'codegenerator.cc',
     'config.cc',
     'connection.cc',
+    'decode.cc',
     'optimizer.cc',
     'rewriteserver.cc',
 )
@@ -14,6 +15,6 @@ configure_file(configuration: config_data, output: 'instrew-server-config.h')
 
 executable('instrew-server', sources,
            include_directories: include_directories('.', '../shared'),
-           dependencies: [librellume, libllvm, instrew_api],
+           dependencies: [librellume, fadec, frvdec, libllvm, libcrypto, instrew_api],
            link_args: ['-ldl'],
            install: true)

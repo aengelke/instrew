@@ -3,6 +3,7 @@
 #include "codegenerator.h"
 #include "config.h"
 #include "connection.h"
+#include "decode.h"
 #include "instrew-server-config.h"
 #include "optimizer.h"
 
@@ -16,6 +17,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassTimingInfo.h>
 #include <llvm/Support/CommandLine.h>
+#include <openssl/sha.h>
 
 #include <chrono>
 #include <cstddef>
@@ -126,6 +128,9 @@ private:
     const InstrewConfig& instrew_cfg;
     CallConv instrew_cc = CallConv::CDECL;
 
+    using DecodeFunc = DecodeResult (*)(uintptr_t, size_t, const uint8_t*);
+    DecodeFunc decode_fn;
+
     LLConfig* rlcfg;
     llvm::LLVMContext ctx;
     llvm::Constant* pc_base;
@@ -138,6 +143,9 @@ private:
     llvm::SmallVector<char, 4096> obj_buffer;
     CodeGenerator codegen;
 
+    uint8_t config_hash[SHA_DIGEST_LENGTH];
+
+    std::chrono::steady_clock::duration dur_predecode{};
     std::chrono::steady_clock::duration dur_lifting{};
     std::chrono::steady_clock::duration dur_instrument{};
     std::chrono::steady_clock::duration dur_llvm_opt{};
@@ -169,6 +177,7 @@ public:
         }
         if (iwsc->tsc_guest_arch == EM_X86_64) {
             ll_config_set_architecture(rlcfg, "x86-64");
+            decode_fn = DecodeX86_64;
             iwcc->tc_callconv = 0; // cdecl
             // TODO: check host arch
             if (instrew_cfg.callconv == 2) {
@@ -197,6 +206,7 @@ public:
             ll_config_set_cpuinfo_func(rlcfg, llvm::wrap(cpuinfo_fn));
         } else if (iwsc->tsc_guest_arch == EM_RISCV) {
             ll_config_set_architecture(rlcfg, "rv64");
+            decode_fn = DecodeRV64;
             if (iwsc->tsc_host_arch == EM_X86_64 && instrew_cfg.callconv == 2) {
                 instrew_cc = CallConv::RV64_X86_HHVM;
                 iwcc->tc_callconv = 1;
@@ -253,10 +263,26 @@ public:
         //     fn.deleteBody();
         //     helper_fns.push_back(&fn);
         // }
+
+        SHA_CTX config_sha;
+        SHA1_Init(&config_sha);
+        SHA1_Update(&config_sha, &instrew_cfg.targetopt, sizeof instrew_cfg.targetopt);
+        SHA1_Update(&config_sha, &instrew_cfg.extrainstcombine, sizeof instrew_cfg.extrainstcombine);
+        SHA1_Update(&config_sha, &instrew_cfg.safecallret, sizeof instrew_cfg.safecallret);
+        SHA1_Update(&config_sha, &instrew_cfg.fullfacets, sizeof instrew_cfg.fullfacets);
+        SHA1_Update(&config_sha, &instrew_cfg.callret, sizeof instrew_cfg.callret);
+        SHA1_Update(&config_sha, &iwsc->tsc_guest_arch, sizeof iwsc->tsc_guest_arch);
+        SHA1_Update(&config_sha, &iwsc->tsc_host_arch, sizeof iwsc->tsc_host_arch);
+        SHA1_Update(&config_sha, &iwsc->tsc_host_cpu_features, sizeof iwsc->tsc_host_cpu_features);
+        SHA1_Update(&config_sha, &iwsc->tsc_stack_alignment, sizeof iwsc->tsc_stack_alignment);
+        SHA1_Update(&config_sha, &iwcc->tc_callconv, sizeof iwcc->tc_callconv);
+        SHA1_Final(config_hash, &config_sha);
     }
     ~IWState() {
         if (instrew_cfg.profile) {
             std::cerr << "Server profile: "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(dur_predecode).count()
+                      << "ms predecode; "
                       << std::chrono::duration_cast<std::chrono::milliseconds>(dur_lifting).count()
                       << "ms lifting; "
                       << std::chrono::duration_cast<std::chrono::milliseconds>(dur_instrument).count()
@@ -272,6 +298,74 @@ public:
     }
 
 private:
+    struct DecodedInst {
+        uint64_t addr;
+        uint8_t size;
+        bool new_block;
+    };
+
+    void Predecode(uintptr_t addr, SHA_CTX* sha, std::vector<DecodedInst>& insts) {
+        uint8_t inst_buf[15];
+
+        std::unordered_map<uintptr_t, size_t> addr_map; // map addr -> inst idx
+        std::deque<uintptr_t> addr_queue;
+        addr_queue.push_back(addr);
+
+        while (!addr_queue.empty()) {
+            uintptr_t cur_addr = addr_queue.front();
+            addr_queue.pop_front();
+
+            bool new_block = true;
+            while (true) {
+                auto cur_idx_iter = addr_map.find(cur_addr);
+                if (cur_idx_iter != addr_map.end()) {
+                    insts[cur_idx_iter->second].new_block = true;
+                    goto end_block;
+                }
+
+                size_t count = iw_readmem(iwc, cur_addr, cur_addr + sizeof inst_buf, inst_buf);
+                auto& inst = insts.emplace_back(DecodedInst{});
+                DecodeResult res = decode_fn(cur_addr, count, inst_buf);
+                if (res.result == DecodeResult::FAILED) {
+                    insts.erase(insts.end() - 1);
+                    goto end_block;
+                }
+
+                if (new_block) {
+                    ptrdiff_t off = cur_addr - addr;
+                    SHA1_Update(sha, &off, sizeof off);
+                }
+                SHA1_Update(sha, inst_buf, res.size * sizeof inst_buf[0]);
+
+                addr_map[cur_addr] = insts.size() - 1;
+                inst.new_block = new_block;
+                inst.addr = cur_addr;
+                inst.size = res.size;
+                cur_addr += res.size;
+                new_block = false;
+
+                switch (res.result) {
+                case DecodeResult::BRANCH:
+                    addr_queue.push_back(res.branch_target);
+                    goto end_block;
+                case DecodeResult::COND_BRANCH:
+                    addr_queue.push_back(res.branch_target);
+                    addr_queue.push_back(cur_addr);
+                    goto end_block;
+                case DecodeResult::CALL:
+                    if (instrew_cfg.callret)
+                        addr_queue.push_back(cur_addr);
+                    goto end_block;
+                case DecodeResult::UNKNOWN_TGT:
+                    goto end_block;
+                default:
+                    break;
+                }
+            };
+        end_block:;
+        }
+    }
+
     llvm::Function* Lift(uintptr_t addr) {
         // Optionally generate position-independent code, where the offset
         // can be adjusted using relocations.
@@ -300,6 +394,25 @@ private:
 
 public:
     void Translate(uintptr_t addr) {
+        auto time_predecode_start = std::chrono::steady_clock::now();
+        std::vector<DecodedInst> insts;
+
+        SHA_CTX sha;
+        SHA1_Init(&sha);
+        SHA1_Update(&sha, config_hash, sizeof config_hash);
+        // Non-PIC: store address, predecode only stores offsets to start addr.
+        uint64_t hash_addr = instrew_cfg.pic ? 0 : addr;
+        SHA1_Update(&sha, &hash_addr, sizeof hash_addr);
+        Predecode(addr, &sha, insts);
+        uint8_t hash[SHA_DIGEST_LENGTH];
+        SHA1_Final(hash, &sha);
+
+        if (iw_cache_probe(iwc, addr, hash)) {
+            if (instrew_cfg.profile)
+                dur_predecode += std::chrono::steady_clock::now() - time_predecode_start;
+            return;
+        }
+
         auto time_lifting_start = std::chrono::steady_clock::now();
         llvm::Function* fn = Lift(addr);
         if (!fn) {
@@ -325,7 +438,7 @@ public:
         if (instrew_cfg.dumpir & 8)
             mod->print(llvm::errs(), nullptr);
 
-        iw_sendobj(iwc, addr, obj_buffer.data(), obj_buffer.size(), nullptr);
+        iw_sendobj(iwc, addr, obj_buffer.data(), obj_buffer.size(), hash);
 
         // Remove unused functions and dead prototypes. Having many prototypes
         // causes some compile-time overhead.
@@ -334,6 +447,7 @@ public:
                 glob_fn.eraseFromParent();
 
         if (instrew_cfg.profile) {
+            dur_predecode += time_lifting_start - time_predecode_start;
             dur_lifting += time_instrument_start - time_lifting_start;
             dur_instrument += time_llvm_opt_start - time_instrument_start;
             dur_llvm_opt += time_llvm_codegen_start - time_llvm_opt_start;

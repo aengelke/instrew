@@ -40,6 +40,14 @@ if not libllvm.found()
                        modules: ['x86', 'aarch64', 'riscv', 'analysis', 'passes'])
 endif
 
+libcrypto = dependency('libcrypto')
+
+fadec = dependency('fadec', static: true,
+                   fallback: ['fadec', 'fadec'],
+                   default_options: ['archmode=only64'])
+frvdec = dependency('frvdec', static: true,
+                    fallback: ['frvdec', 'frvdec'])
+
 rellume = subproject('rellume')
 librellume = rellume.get_variable('librellume')
 
