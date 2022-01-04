@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <bitset>
 #include <iostream>
+#include <optional>
 #include <sstream>
 
 
@@ -32,6 +33,28 @@ static uint64_t pointerOffset(llvm::Value* base, llvm::Value* ptr,
     }
     assert(ptr == base);
     return offset;
+}
+
+static std::optional<std::string> FuncConstName(llvm::Value* pc) {
+    if (auto* tgt_cnst = llvm::dyn_cast<llvm::ConstantInt>(pc)) {
+        std::stringstream namebuf;
+        namebuf << "Z" << std::oct << tgt_cnst->getZExtValue();
+        return namebuf.str();
+    }
+    if (auto* expr = llvm::dyn_cast<llvm::ConstantExpr>(pc)) {
+        if (expr->getOpcode() != llvm::Instruction::Add)
+            return std::nullopt;
+        auto* lhs = llvm::dyn_cast<llvm::ConstantExpr>(expr->getOperand(0));
+        auto* rhs = llvm::dyn_cast<llvm::ConstantInt>(expr->getOperand(1));
+        if (lhs && rhs && lhs->getOpcode() == llvm::Instruction::PtrToInt &&
+            llvm::isa<llvm::GlobalVariable>(lhs->getOperand(0)) &&
+            lhs->getOperand(0)->getName() == "instrew_baseaddr") {
+            std::stringstream namebuf;
+            namebuf << "S" << std::oct << rhs->getZExtValue();
+            return namebuf.str();
+        }
+    }
+    return std::nullopt;
 }
 
 // Note: replace with C++20 std::span.
@@ -228,18 +251,13 @@ struct CCState {
             for (unsigned i = 0; i < fields.size(); i++)
                 params[fields[i].argidx] = vals[i];
 
-            if (auto* tgt_cnst = llvm::dyn_cast<llvm::ConstantInt>(params[0])) {
-                uint64_t tgt_addr = tgt_cnst->getZExtValue();
-                if (!tgt_addr)
-                    goto nosubst;
-                std::stringstream namebuf;
-                namebuf << "Z" << std::oct << tgt_addr << "_" << std::hex << tgt_addr;
-                tgt = llvm::cast<llvm::Function>(tgt->getParent()->getOrInsertFunction(namebuf.str(), tgt_ty).getCallee());
+            if (auto name = FuncConstName(params[0])) {
+                auto fnc = tgt->getParent()->getOrInsertFunction(*name, tgt_ty);
+                tgt = llvm::cast<llvm::Function>(fnc.getCallee());
                 tgt->copyAttributesFrom(nfn);
                 tgt->setDSOLocal(true);
-                params[0] = llvm::UndefValue::get(tgt_cnst->getType());
+                params[0] = llvm::UndefValue::get(params[0]->getType());
             }
-        nosubst:
 
             auto newcall = irb.CreateCall(tgt_ty, tgt, params);
             newcall->setTailCallKind(call->getTailCallKind());
