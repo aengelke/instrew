@@ -274,9 +274,9 @@ public:
 private:
     llvm::Function* Lift(uintptr_t addr) {
         // Optionally generate position-independent code, where the offset
-        // can be adjusted using relocations. For now, this is always zero.
+        // can be adjusted using relocations.
         if (instrew_cfg.pic)
-            ll_config_set_pc_base(rlcfg, 0, llvm::wrap(pc_base));
+            ll_config_set_pc_base(rlcfg, addr, llvm::wrap(pc_base));
 
         LLFunc* rlfn = ll_func_new(llvm::wrap(mod.get()), rlcfg);
         bool decode_fail = ll_func_decode_cfg(rlfn, addr,
@@ -293,9 +293,7 @@ private:
         llvm::Function* fn = llvm::unwrap<llvm::Function>(ll_func_lift(rlfn));
         ll_func_dispose(rlfn);
 
-        std::stringstream namebuf;
-        namebuf << "Z" << std::oct << addr << "_" << std::hex << addr;
-        fn->setName(namebuf.str());
+        fn->setName("S0");
 
         return fn;
     }

@@ -61,7 +61,7 @@ resolve_func(struct CpuState* cpu_state, uintptr_t addr,
         if (retval < 0)
             goto error;
 
-        retval = rtld_add_object(&state->rtld, obj_base, obj_size);
+        retval = rtld_add_object(&state->rtld, obj_base, obj_size, addr);
         if (retval < 0)
             goto error;
         retval = rtld_resolve(&state->rtld, addr, &func);

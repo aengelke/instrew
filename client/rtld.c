@@ -177,21 +177,10 @@ rtld_patch_create_stub(Rtld* rtld, const struct RtldPatchData* patch_data,
 }
 
 
-static uintptr_t
-rtld_decode_name(const char* name) {
-    if (name[0] != 'Z')
-        return 0;
-    uintptr_t addr = 0;
-    for (unsigned k = 1; name[k] && name[k] != '_'; k++) {
-        if (name[k] < '0' || name[k] >= '8')
-            return 0;
-        addr = (addr << 3) | (name[k] - '0');
-    }
-    return addr;
-}
-
 static RtldObject*
 rtld_hash_lookup(Rtld* r, uintptr_t addr) {
+    if (!addr)
+        return NULL;
     size_t hash = RTLD_HASH(addr);
     size_t end = ((hash-1) & RTLD_HASH_MASK);
     if (hash == end)
@@ -209,6 +198,7 @@ rtld_hash_lookup(Rtld* r, uintptr_t addr) {
 struct RtldElf {
     uint8_t* base;
     size_t size;
+    uint64_t skew;
     Elf64_Ehdr* re_ehdr;
     Elf64_Shdr* re_shdr;
 
@@ -218,12 +208,14 @@ struct RtldElf {
 typedef struct RtldElf RtldElf;
 
 static int
-rtld_elf_init(RtldElf* re, void* obj_base, size_t obj_size, Rtld* rtld) {
+rtld_elf_init(RtldElf* re, void* obj_base, size_t obj_size, uint64_t skew,
+              Rtld* rtld) {
     if (obj_size < sizeof(Elf64_Ehdr))
         goto err;
 
     re->base = obj_base;
     re->size = obj_size;
+    re->skew = skew;
     re->re_ehdr = obj_base;
     re->rtld = rtld;
 
@@ -245,6 +237,22 @@ rtld_elf_init(RtldElf* re, void* obj_base, size_t obj_size, Rtld* rtld) {
 
 err:
     return -EINVAL;
+}
+
+static int
+rtld_elf_decode_name(RtldElf* re, const char* name, uintptr_t* out_addr) {
+    uintptr_t addr = 0;
+    if (name[0] != 'Z' && name[0] != 'S')
+        return -EINVAL;
+    for (unsigned k = 1; name[k] && name[k] != '_'; k++) {
+        if (name[k] < '0' || name[k] >= '8')
+            return 0;
+        addr = (addr << 3) | (name[k] - '0');
+    }
+    if (name[0] == 'S')
+        addr += re->skew;
+    *out_addr = addr;
+    return 0;
 }
 
 static int
@@ -283,11 +291,11 @@ rtld_elf_resolve_sym(RtldElf* re, size_t symtab_idx, size_t sym_idx,
             dprintf(2, "undefined symbol reference to %s\n", name);
             return -EINVAL;
         } else if (!strcmp(name, "instrew_baseaddr")) {
-            *out_addr = 0; // TODO!
+            *out_addr = re->skew;
             return 0;
         } else {
-            uintptr_t addr = rtld_decode_name(name);
-            if (addr) {
+            uintptr_t addr = 0;
+            if (!rtld_elf_decode_name(re, name, &addr)) {
                 if (!rtld_resolve(re->rtld, addr, (void**) out_addr))
                     return 0; // we got it already
                 // Create a stub. We cannot use the normal dispatcher, as the
@@ -508,7 +516,7 @@ static int rtld_set(Rtld* r, uintptr_t addr, void* entry, void* obj_base,
     return 0;
 }
 
-int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
+int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
     // "Link" (fix) given ELF file.
     //  - check that all sections are non-writable
     //  - check that there is no GOT/PLT (we would have to really link stuff
@@ -520,7 +528,7 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
     int retval;
 
     RtldElf re;
-    if ((retval = rtld_elf_init(&re, obj_base, obj_size, r)) < 0)
+    if ((retval = rtld_elf_init(&re, obj_base, obj_size, skew, r)) < 0)
         goto out;
 
     uintptr_t entry = 0;
@@ -571,8 +579,9 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
                 rtld_elf_resolve_str(&re, elf_shnt->sh_link, elf_sym->st_name, &name);
                 if (!name)
                     goto out;
-                uintptr_t addr = rtld_decode_name(name);
-                if (!addr) {
+                uintptr_t addr = 0;
+                retval = rtld_elf_decode_name(&re, name, &addr);
+                if (retval < 0 || addr == 0) {
                     dprintf(2, "invalid function name %s\n", name);
                     goto out;
                 }
@@ -581,8 +590,8 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size) {
                     goto out;
 
                 if (UNLIKELY(r->perfmap_fd >= 0)) {
-                    dprintf(r->perfmap_fd, "%lx %lx %s\n",
-                            entry, elf_sym->st_size, name);
+                    dprintf(r->perfmap_fd, "%lx %lx %lx_%s\n",
+                            entry, elf_sym->st_size, addr, name);
                 }
             }
             break;

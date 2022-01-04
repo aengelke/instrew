@@ -202,7 +202,7 @@ int main(int argc, char** argv) {
         return retval;
     }
     if (initobj_size > 0) {
-        retval = rtld_add_object(&state.rtld, initobj, initobj_size);
+        retval = rtld_add_object(&state.rtld, initobj, initobj_size, 0);
         if (retval < 0) {
             puts("error: could not get initial object");
             return retval;

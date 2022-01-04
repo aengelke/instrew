@@ -36,7 +36,7 @@ struct RtldPatchData {
 int rtld_init(Rtld* r, int perfmap_fd, const struct DispatcherInfo* disp_info);
 int rtld_resolve(Rtld* r, uintptr_t addr, void** out_entry);
 
-int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size);
+int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew);
 
 void rtld_patch(struct RtldPatchData* patch_data, void* sym);
 
