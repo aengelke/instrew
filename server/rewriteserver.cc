@@ -366,23 +366,32 @@ private:
         }
     }
 
-    llvm::Function* Lift(uintptr_t addr) {
+    llvm::Function* Lift(uintptr_t addr, const std::vector<DecodedInst>& insts) {
         // Optionally generate position-independent code, where the offset
         // can be adjusted using relocations.
         if (instrew_cfg.pic)
             ll_config_set_pc_base(rlcfg, addr, llvm::wrap(pc_base));
 
         LLFunc* rlfn = ll_func_new(llvm::wrap(mod.get()), rlcfg);
-        bool decode_fail = ll_func_decode_cfg(rlfn, addr,
-            [](size_t addr, uint8_t* buf, size_t buf_sz, void* user_arg) {
-                auto* iwc = static_cast<IWConnection*>(user_arg);
-                return iw_readmem(iwc, addr, addr + buf_sz, buf);
-            },
-            iwc);
-        if (decode_fail) {
-            std::cerr << "error: could not decode at 0x" << std::hex << addr
-                      << std::endl;
-            return nullptr;
+        uint8_t buf[15];
+        uint64_t block_addr = 0;
+        for (size_t i = 0; i < insts.size(); i++) {
+            const DecodedInst& inst = insts[i];
+            if (inst.new_block)
+                block_addr = inst.addr;
+            size_t count = iw_readmem(iwc, inst.addr, inst.addr + sizeof buf, buf);
+            int ret = ll_func_add_instr(rlfn, block_addr, inst.addr, count, buf);
+            if (ret != inst.size) {
+                if (i == 0) { // we failed at the first instruction...
+                    std::cerr << "error: could not decode at 0x"
+                              << std::hex << addr << std::endl;
+                    ll_func_dispose(rlfn);
+                    return nullptr;
+                }
+                // Skip forward to next block.
+                while (i < insts.size() - 1 && !insts[i + 1].new_block)
+                    i += 1;
+            }
         }
         llvm::Function* fn = llvm::unwrap<llvm::Function>(ll_func_lift(rlfn));
         ll_func_dispose(rlfn);
@@ -414,7 +423,7 @@ public:
         }
 
         auto time_lifting_start = std::chrono::steady_clock::now();
-        llvm::Function* fn = Lift(addr);
+        llvm::Function* fn = Lift(addr, insts);
         if (!fn) {
             iw_sendobj(iwc, addr, nullptr, 0, nullptr);
             return;
