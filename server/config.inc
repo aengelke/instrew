@@ -10,6 +10,8 @@ INSTREW_OPT(bool, safecallret, false)
 INSTREW_OPT(bool, fullfacets, false)
 INSTREW_OPT(bool, callret, false)
 INSTREW_OPT(bool, pic, false)
+INSTREW_OPT(bool, cache, false)
+INSTREW_OPT(std::string, cachedir, "")
 
 
 // INSTREW_SERVER_CONF_BOOL(2, native_segments, false)

@@ -325,7 +325,7 @@ public:
         if (instrew_cfg.dumpir & 8)
             mod->print(llvm::errs(), nullptr);
 
-        iw_sendobj(iwc, addr, obj_buffer.data(), obj_buffer.size());
+        iw_sendobj(iwc, addr, obj_buffer.data(), obj_buffer.size(), nullptr);
 
         // Remove unused functions and dead prototypes. Having many prototypes
         // causes some compile-time overhead.

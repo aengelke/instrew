@@ -1,4 +1,5 @@
 sources = files(
+    'cache.cc',
     'callconv.cc',
     'codegenerator.cc',
     'config.cc',

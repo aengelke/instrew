@@ -1,6 +1,7 @@
 
 #include "connection.h"
 
+#include "cache.h"
 #include "config.h"
 
 #include <cassert>
@@ -10,7 +11,9 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <unistd.h>
 #include <unordered_map>
+#include <sys/sendfile.h>
 
 
 namespace {
@@ -82,6 +85,16 @@ public:
         if (wr_hdr.sz == 0)
             std::fflush(file_wr);
     }
+    void Sendfile(int fd, size_t size) {
+        std::fflush(file_wr);
+        while (size) {
+            ssize_t cnt = sendfile(fileno(file_wr), fd, nullptr, size);
+            if (cnt < 0)
+                assert(false && "unable to write msg content (sendfile)");
+            size -= cnt;
+        }
+        wr_hdr.sz -= size;
+    }
     template<typename T>
     void SendMsg(Msg::Id id, const T& val) {
         SendMsgHdr(id, sizeof(T));
@@ -152,6 +165,7 @@ struct IWConnection {
     IWClientConfig iwcc;
 
     RemoteMemory remote_memory;
+    instrew::Cache cache;
 
     IWConnection(const struct IWFunctions* fns, Conn& conn)
             : fns(fns), conn(conn), remote_memory(conn) {}
@@ -165,15 +179,27 @@ private:
         return std::fopen(debug_out1_name.str().c_str(), "wb");
     }
 
-
 public:
-    void SendObject(uint64_t addr, const void* data, size_t size) {
+    bool CacheProbe(uint64_t addr, const uint8_t* hash) {
+        auto res = cache.Get(hash);
+        if (res.first < 0)
+            return false;
+        conn.SendMsgHdr(Msg::S_OBJECT, res.second);
+        conn.Sendfile(res.first, res.second);
+        close(res.first);
+        return true;
+    }
+
+    void SendObject(uint64_t addr, const void* data, size_t size,
+                    const uint8_t* hash) {
         conn.SendMsgHdr(Msg::S_OBJECT, size);
         conn.Write(data, size);
         if (FILE* df = OpenObjDump(addr)) {
             std::fwrite(data, size, 1, df);
             std::fclose(df);
         }
+        if (hash)
+            cache.Put(hash, size, static_cast<const char*>(data));
     }
 
     int Run(int argc, char** argv) {
@@ -184,12 +210,13 @@ public:
         iwsc = conn.Read<IWServerConfig>();
 
         cfg = InstrewConfig(argc - 1, argv + 1);
+        cache = instrew::Cache(cfg);
 
         IWState* state = fns->init(this, cfg);
         if (iwsc.tsc_server_mode == 0) {
             conn.SendMsg(Msg::S_INIT, iwcc);
             // TODO: send actual init object.
-            SendObject(0, "", 0);
+            SendObject(0, "", 0, nullptr);
         }
 
         while (true) {
@@ -218,9 +245,12 @@ struct IWClientConfig* iw_get_cc(IWConnection* iwc) {
 size_t iw_readmem(IWConnection* iwc, uintptr_t addr, size_t len, uint8_t* buf) {
     return iwc->remote_memory.Get(addr, len, buf);
 }
+bool iw_cache_probe(IWConnection* iwc, uintptr_t addr, const uint8_t* hash) {
+    return iwc->CacheProbe(addr, hash);
+}
 void iw_sendobj(IWConnection* iwc, uintptr_t addr, const void* data,
-                size_t size) {
-    iwc->SendObject(addr, data, size);
+                size_t size, const uint8_t* hash) {
+    iwc->SendObject(addr, data, size, hash);
 }
 
 int iw_run_server(const struct IWFunctions* fns, int argc, char** argv) {

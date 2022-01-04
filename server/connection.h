@@ -32,7 +32,8 @@ typedef struct IWConnection IWConnection;
 const struct IWServerConfig* iw_get_sc(IWConnection* iwc);
 struct IWClientConfig* iw_get_cc(IWConnection* iwc);
 size_t iw_readmem(IWConnection* iwc, uintptr_t addr, size_t len, uint8_t* buf);
-void iw_sendobj(IWConnection* iwc, uintptr_t addr, const void* data, size_t size);
+bool iw_cache_probe(IWConnection* iwc, uintptr_t addr, const uint8_t* hash);
+void iw_sendobj(IWConnection* iwc, uintptr_t addr, const void* data, size_t size, const uint8_t* hash);
 
 typedef struct IWState IWState;
 
