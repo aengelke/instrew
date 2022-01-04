@@ -7,6 +7,7 @@
 
 
 struct InstrewConfig {
+    InstrewConfig() = default;
     InstrewConfig(int argc, const char* const* argv);
 
 #define INSTREW_OPT(type, name, def) \

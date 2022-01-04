@@ -2,6 +2,8 @@
 #ifndef _INSTREW_SERVER_CONNECTION_H
 #define _INSTREW_SERVER_CONNECTION_H
 
+#include <config.h>
+
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
@@ -27,22 +29,16 @@ struct IWClientConfig {
 
 typedef struct IWConnection IWConnection;
 
-struct IWObject {
-    const void* data;
-    size_t size;
-};
-
 const struct IWServerConfig* iw_get_sc(IWConnection* iwc);
 struct IWClientConfig* iw_get_cc(IWConnection* iwc);
-void iw_set_dumpobj(IWConnection* iwc, bool dumpobj);
 size_t iw_readmem(IWConnection* iwc, uintptr_t addr, size_t len, uint8_t* buf);
+void iw_sendobj(IWConnection* iwc, uintptr_t addr, const void* data, size_t size);
 
 typedef struct IWState IWState;
 
 struct IWFunctions {
-    struct IWState* (* init)(IWConnection* iwc, unsigned argc,
-                             const char* const* argv);
-    struct IWObject (* translate)(IWState* state, uintptr_t addr);
+    struct IWState* (* init)(IWConnection* iwc, const InstrewConfig& cfg);
+    void (* translate)(IWState* state, uintptr_t addr);
     void (* finalize)(IWState* state);
 };
 

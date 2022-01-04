@@ -123,7 +123,7 @@ private:
     IWConnection* iwc;
     const IWServerConfig* iwsc = nullptr;
     IWClientConfig* iwcc = nullptr;
-    const InstrewConfig instrew_cfg;
+    const InstrewConfig& instrew_cfg;
     CallConv instrew_cc = CallConv::CDECL;
 
     LLConfig* rlcfg;
@@ -145,16 +145,14 @@ private:
 
 public:
 
-    IWState(IWConnection* iwc, unsigned argc, const char* const* argv)
-            : instrew_cfg(argc - 1, argv + 1), optimizer(instrew_cfg),
+    IWState(IWConnection* iwc, const InstrewConfig& cfg)
+            : instrew_cfg(cfg), optimizer(instrew_cfg),
               codegen(*iw_get_sc(iwc), instrew_cfg, obj_buffer) {
         this->iwc = iwc;
         iwsc = iw_get_sc(iwc);
         iwcc = iw_get_cc(iwc);
 
-        iw_set_dumpobj(iwc, instrew_cfg.dumpobj);
-
-        llvm::cl::ParseEnvironmentOptions(argv[0], "INSTREW_SERVER_LLVM_OPTS");
+        llvm::cl::ParseEnvironmentOptions("instrew-server", "INSTREW_SERVER_LLVM_OPTS");
         llvm::TimePassesIsEnabled = instrew_cfg.timepasses;
 
         rlcfg = ll_config_new();
@@ -303,11 +301,13 @@ private:
     }
 
 public:
-    IWObject Translate(uintptr_t addr) {
+    void Translate(uintptr_t addr) {
         auto time_lifting_start = std::chrono::steady_clock::now();
         llvm::Function* fn = Lift(addr);
-        if (!fn)
-            return IWObject{};
+        if (!fn) {
+            iw_sendobj(iwc, addr, nullptr, 0, nullptr);
+            return;
+        }
         if (instrew_cfg.dumpir & 1)
             mod->print(llvm::errs(), nullptr);
 
@@ -327,6 +327,8 @@ public:
         if (instrew_cfg.dumpir & 8)
             mod->print(llvm::errs(), nullptr);
 
+        iw_sendobj(iwc, addr, obj_buffer.data(), obj_buffer.size());
+
         // Remove unused functions and dead prototypes. Having many prototypes
         // causes some compile-time overhead.
         for (auto& glob_fn : llvm::make_early_inc_range(*mod))
@@ -339,19 +341,17 @@ public:
             dur_llvm_opt += time_llvm_codegen_start - time_llvm_opt_start;
             dur_llvm_codegen += std::chrono::steady_clock::now() - time_llvm_codegen_start;
         }
-
-        return IWObject{obj_buffer.data(), obj_buffer.size()};
     }
 };
 
 
 int main(int argc, char** argv) {
     static const IWFunctions iwf = {
-        /*.init=*/[](IWConnection* iwc, unsigned argc, const char* const* argv) {
-            return new IWState(iwc, argc, argv);
+        /*.init=*/[](IWConnection* iwc, const InstrewConfig& cfg) {
+            return new IWState(iwc, cfg);
         },
         /*.translate=*/[](IWState* state, uintptr_t addr) {
-            return state->Translate(addr);
+            state->Translate(addr);
         },
         /*.finalize=*/[](IWState* state) {
             delete state;
