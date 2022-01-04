@@ -385,6 +385,9 @@ rtld_reloc_at(const struct RtldPatchData* patch_data, void* tgt, void* sym) {
         rtld_blend(tgt, 0xffffffff, syma);
         break;
 #elif defined(__aarch64__)
+    case R_AARCH64_PREL64:
+        rtld_blend(tgt, UINT64_MAX, prel_syma);
+        break;
     case R_AARCH64_PREL32:
         if (!rtld_elf_signed_range(prel_syma, 32, "R_AARCH64_PREL32"))
             return -EINVAL;
