@@ -67,6 +67,7 @@ Cache::Cache(const InstrewConfig& instrew_cfg) {
         return;
     active = true;
     readonly = instrew_cfg.cachereadonly;
+    verbose = instrew_cfg.cacheverbose;
 }
 
 Cache::~Cache() {
@@ -91,7 +92,8 @@ std::pair<int,size_t> Cache::Get(const uint8_t* hash) {
         close(fd);
         return std::make_pair(-1, 0);
     }
-    // std::cerr << "hitting " << cachefile << "\n";
+    if (verbose)
+        std::cerr << "hitting " << cachefile << "\n";
     return std::make_pair(fd, sb.st_size);
 }
 
@@ -124,7 +126,8 @@ void Cache::Put(const uint8_t* hash, size_t bufsz, const char* buf) {
         unlink(cachefile_tmp.c_str());
         goto close_fds;
     }
-    // std::cerr << "writing to " << cachefile_tmp << " " << cachefile << "\n";
+    if (verbose)
+        std::cerr << "writing to " << cachefile << "\n";
     if (rename(cachefile_tmp.c_str(), cachefile.c_str()) < 0) {
         unlink(cachefile_tmp.c_str());
         goto close_fds;

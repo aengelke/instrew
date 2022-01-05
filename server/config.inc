@@ -12,6 +12,7 @@ INSTREW_OPT(bool, callret, false)
 INSTREW_OPT(bool, pic, false)
 INSTREW_OPT(bool, cache, false)
 INSTREW_OPT(bool, cachereadonly, false)
+INSTREW_OPT(bool, cacheverbose, false)
 INSTREW_OPT(std::string, cachedir, "")
 
 

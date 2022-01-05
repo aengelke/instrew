@@ -26,6 +26,7 @@ private:
 
     bool active;
     bool readonly;
+    bool verbose;
     std::filesystem::path path;
 };
 
