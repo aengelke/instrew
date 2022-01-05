@@ -223,6 +223,8 @@ rtld_elf_init(RtldElf* re, void* obj_base, size_t obj_size, uint64_t skew,
         goto err;
     if (re->re_ehdr->e_type != ET_REL)
         goto err;
+    if (re->re_ehdr->e_ident[EI_CLASS] != ELFCLASS64)
+        goto err;
     if (!elf_check_arch(re->re_ehdr))
         goto err;
 
