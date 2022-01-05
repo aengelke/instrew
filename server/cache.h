@@ -25,6 +25,7 @@ private:
     std::filesystem::path FileName(const uint8_t* hash, std::string suffix = "");
 
     bool active;
+    bool readonly;
     std::filesystem::path path;
 };
 

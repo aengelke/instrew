@@ -66,6 +66,7 @@ Cache::Cache(const InstrewConfig& instrew_cfg) {
     if (std::filesystem::create_directories(path, ec) || ec)
         return;
     active = true;
+    readonly = instrew_cfg.cachereadonly;
 }
 
 Cache::~Cache() {
@@ -95,7 +96,7 @@ std::pair<int,size_t> Cache::Get(const uint8_t* hash) {
 }
 
 void Cache::Put(const uint8_t* hash, size_t bufsz, const char* buf) {
-    if (!active)
+    if (!active || readonly)
         return;
 
     std::filesystem::path cachefile = FileName(hash, ".tmp");
