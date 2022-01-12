@@ -9,6 +9,7 @@
 
 #include <linux/errno.h>
 #include <linux/fcntl.h>
+#include <linux/posix_types.h>
 #include <linux/time.h>
 #include <linux/unistd.h>
 
@@ -22,8 +23,9 @@
 #define GNU_FORCE_EXTERN
 #endif
 
-#define ssize_t intptr_t
-#define off_t intptr_t
+typedef __kernel_ssize_t ssize_t;
+typedef __kernel_off_t off_t;
+typedef __kernel_pid_t pid_t;
 
 extern char **environ;
 
