@@ -119,10 +119,12 @@ emulate_syscall(uint64_t* cpu_regs) {
     case 16: nr = __NR_ioctl; goto native; // TODO: can something strange happen?
     case 17: nr = __NR_pread64; goto native;
     case 18: nr = __NR_pwrite64; goto native;
+    case 19: nr = __NR_readv; goto native;
     case 20: nr = __NR_writev; goto native;
 #ifdef __x86_64__
     case 23: nr = __NR_select; goto native;
 #endif
+    case 24: nr = __NR_sched_yield; goto native;
     case 25: nr = __NR_mremap; goto native;
     case 32: nr = __NR_dup; goto native;
     case 39: nr = __NR_getpid; goto native;
@@ -135,6 +137,8 @@ emulate_syscall(uint64_t* cpu_regs) {
     // case 78: nr = __NR_getdents; goto native; // Needs mapping to getdents64
     case 79: nr = __NR_getcwd; goto native;
     case 80: nr = __NR_chdir; goto native;
+    case 81: nr = __NR_fchdir; goto native;
+    case 91: nr = __NR_fchmod; goto native;
     case 96: nr = __NR_gettimeofday; goto native;
     case 97: nr = __NR_getrlimit; goto native;
     case 99: nr = __NR_sysinfo; goto native;
@@ -145,17 +149,25 @@ emulate_syscall(uint64_t* cpu_regs) {
     case 115: nr = __NR_getgroups; goto native;
     case 116: nr = __NR_setgroups; goto native;
     case 137: nr = __NR_statfs; goto native; // FIXME: handle buffer argument
+    case 161: nr = __NR_chroot; goto native;
     case 191: nr = __NR_getxattr; goto native;
     case 192: nr = __NR_lgetxattr; goto native;
     case 193: nr = __NR_fgetxattr; goto native;
     case 202: nr = __NR_futex; goto native;
     case 217: nr = __NR_getdents64; goto native;
     case 218: nr = __NR_set_tid_address; goto native;
+    case 221: nr = __NR_fadvise64; goto native;
     case 228: nr = __NR_clock_gettime; goto native;
+    case 229: nr = __NR_clock_getres; goto native;
+    case 230: nr = __NR_clock_nanosleep; goto native;
     case 257: goto common_openat;
+    case 260: nr = __NR_fchownat; goto native;
+    case 268: nr = __NR_fchmodat; goto native;
     case 270: nr = __NR_pselect6; goto native;
+    case 271: nr = __NR_ppoll; goto native;
     case 273: nr = __NR_set_robust_list; goto native;
     case 274: nr = __NR_get_robust_list; goto native;
+    case 292: nr = __NR_dup3; goto native;
     case 293: nr = __NR_pipe2; goto native;
     case 302: nr = __NR_prlimit64; goto native;
     case 318: nr = __NR_getrandom; goto native;
@@ -190,8 +202,15 @@ emulate_syscall(uint64_t* cpu_regs) {
     case 89: // readlink
         res = syscall(__NR_readlinkat, AT_FDCWD, arg0, arg1, arg2, 0, 0);
         break;
+    case 90: // chmod
+        res = syscall(__NR_fchmodat, AT_FDCWD, arg0, arg1, 0, 0, 0);
+        break;
     case 92: // chown
         res = syscall(__NR_fchownat, AT_FDCWD, arg0, arg1, arg2, 0, 0);
+        break;
+    case 94: // lchown
+        res = syscall(__NR_fchownat, AT_FDCWD, arg0, arg1, arg2,
+                      AT_SYMLINK_NOFOLLOW, 0);
         break;
 
     // And some syscalls need special handling, e.g. to different structs.
@@ -249,6 +268,11 @@ emulate_syscall(uint64_t* cpu_regs) {
         }
         break;
     }
+    case 7: // poll
+        res = syscall(__NR_ppoll, arg0, arg1, (long) arg2 >= 0 ?
+                      (uintptr_t) &((struct timespec) { arg2/1000, arg2%1000*1000000 }) : 0,
+                      0, _NSIG/8, 0);
+        break;
     case 33: // dup2
         if (arg0 == arg1) { // If oldfd == newfd return EBADF if oldfd is invalid
             res = syscall(__NR_fcntl, arg0, F_GETFL, 0, 0, 0, 0);
@@ -354,6 +378,8 @@ emulate_rv64_syscall(uint64_t* cpu_regs) {
         break;
 
     case 17: nr = __NR_getcwd; goto native;
+    case 23: nr = __NR_dup; goto native;
+    case 24: nr = __NR_dup3; goto native;
     case 25: // fcntl
         switch (arg0) {
         case F_DUPFD:
@@ -374,7 +400,11 @@ emulate_rv64_syscall(uint64_t* cpu_regs) {
     case 46: nr = __NR_ftruncate; goto native;
     case 48: nr = __NR_faccessat; goto native;
     case 49: nr = __NR_chdir; goto native;
+    case 50: nr = __NR_fchdir; goto native;
+    case 51: nr = __NR_chroot; goto native;
     case 52: nr = __NR_fchmod; goto native;
+    case 53: nr = __NR_fchmodat; goto native;
+    case 54: nr = __NR_fchownat; goto native;
     case 55: nr = __NR_fchown; goto native;
     case 56:
         nr = __NR_openat;
@@ -388,7 +418,11 @@ emulate_rv64_syscall(uint64_t* cpu_regs) {
     case 62: nr = __NR_lseek; goto native;
     case 63: nr = __NR_read; goto native;
     case 64: nr = __NR_write; goto native;
+    case 65: nr = __NR_readv; goto native;
     case 66: nr = __NR_writev; goto native;
+    case 67: nr = __NR_pread64; goto native;
+    case 68: nr = __NR_pwrite64; goto native;
+    case 73: nr = __NR_ppoll; goto native;
     case 78: nr = __NR_readlinkat; goto native;
     case 80: // fstat
         res = syscall(__NR_fstat, arg0, (uintptr_t) &tmp_struct, 0, 0, 0, 0);
@@ -445,6 +479,9 @@ emulate_rv64_syscall(uint64_t* cpu_regs) {
     case 99: nr = __NR_set_robust_list; goto native;
     case 100: nr = __NR_get_robust_list; goto native;
     case 113: nr = __NR_clock_gettime; goto native;
+    case 114: nr = __NR_clock_getres; goto native;
+    case 115: nr = __NR_clock_nanosleep; goto native;
+    case 124: nr = __NR_sched_yield; goto native;
     case 131: nr = __NR_tgkill; goto native;
     case 160:
         res = syscall(__NR_uname, arg0, 0, 0, 0, 0, 0);
@@ -468,6 +505,7 @@ emulate_rv64_syscall(uint64_t* cpu_regs) {
     case 215: nr = __NR_munmap; goto native;
     case 216: nr = __NR_mremap; goto native;
     case 222: nr = __NR_mmap; goto native;
+    case 223: nr = __NR_fadvise64; goto native;
     case 226: nr = __NR_mprotect; goto native;
     case 260: nr = __NR_wait4; goto native;
     case 261: nr = __NR_prlimit64; goto native;
