@@ -1,0 +1,17 @@
+image: alpine/edge
+arch: x86_64
+packages:
+  - meson
+  - llvm11-dev
+  - linux-headers
+  - openssl-dev
+sources:
+  - https://github.com/aengelke/instrew.git
+tasks:
+  - build: |
+      echo -e "[binaries]\nllvm-config='$(which llvm11-config)'" > machine.ini
+      mkdir build
+      meson build instrew -Dprefix="$PWD"/install --native-file machine.ini -Dbuildtype=debugoptimized -Doptimization=3
+      ninja -C build
+      ninja -C build test
+      ninja -C build install
