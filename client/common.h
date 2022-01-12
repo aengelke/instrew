@@ -30,6 +30,10 @@ typedef __kernel_pid_t pid_t;
 extern char **environ;
 
 long syscall(long, long, long, long, long, long, long);
+
+int set_thread_area(void* tp);
+void* get_thread_area(void);
+
 __attribute__((noreturn)) void _exit(int status);
 int getpid(void);
 

@@ -2,6 +2,9 @@
 #include <common.h>
 
 #include <elf.h>
+#if defined(__x86_64__)
+#include <asm/prctl.h>
+#endif
 
 
 extern int main(int argc, char** argv);
@@ -115,6 +118,18 @@ static size_t syscall6(int syscall_number, size_t a1, size_t a2, size_t a3,
                      "D"(a1),"S"(a2),"d"(a3),"r"(r8),"r"(r9),"r"(r10) :
                      "memory","rcx","r11");
     return retval;
+}
+
+int
+set_thread_area(void* tp) {
+    return syscall2(__NR_arch_prctl, ARCH_SET_FS, (uintptr_t) tp);
+}
+
+void*
+get_thread_area(void) {
+    void* tp;
+    __asm__("mov %%fs:0, %0" : "=r"(tp));
+    return tp;
 }
 
 #elif defined(__aarch64__)
@@ -236,6 +251,19 @@ syscall6(int syscall_number, size_t arg1, size_t arg2, size_t arg3,
                      "r"(num),"r"(p0),"r"(p1),"r"(p2),"r"(p3),"r"(p4),"r"(p5) :
                      "memory");
     return retval;
+}
+
+int
+set_thread_area(void* tp) {
+    __asm__ volatile("msr tpidr_el0, %0" :: "r"(tp) : "memory");
+    return 0;
+}
+
+void*
+get_thread_area(void) {
+    void* tp;
+    __asm__("mrs %0, tpidr_el0" : "=r"(tp));
+    return tp;
 }
 
 #else

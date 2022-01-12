@@ -216,6 +216,12 @@ int main(int argc, char** argv) {
     cpu_state->self = cpu_state;
     cpu_state->state = &state;
 
+    retval = set_thread_area(cpu_state);
+    if (retval) {
+        puts("error: could not set thread area");
+        return retval;
+    }
+
     uint64_t* cpu_regs = (uint64_t*) &cpu_state->regdata;
 
     cpu_regs[0] = (uintptr_t) info.exec_entry;
