@@ -48,7 +48,7 @@ private:
         irb.CreateCondBr(is_exit, bb2, bb3);
 
         irb.SetInsertPoint(bb2);
-        llvm::Value* count_ptr = irb.CreateConstGEP1_64(sptr, -0x40);
+        llvm::Value* count_ptr = irb.CreateConstGEP1_64(sptr, -0x30);
         count_ptr = irb.CreatePointerCast(count_ptr, i64p_sptr);
         llvm::Value* count_ld = irb.CreateLoad(count_ptr);
         const char* fmt_str = "Instruction count: 0x%lx\n";
@@ -92,7 +92,7 @@ public:
         // Construct pointer to "instruction counter" in entry block.
         unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
         llvm::Type* count_ptr_ty = irb.getInt64Ty()->getPointerTo(sptr_as);
-        llvm::Value* count_ptr = irb.CreateConstGEP1_64(sptr, -0x40);
+        llvm::Value* count_ptr = irb.CreateConstGEP1_64(sptr, -0x30);
         count_ptr = irb.CreatePointerCast(count_ptr, count_ptr_ty);
 
         // We can't remove instructions when iterating, so store call sites.

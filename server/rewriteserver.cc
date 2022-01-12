@@ -55,6 +55,16 @@ static llvm::GlobalVariable* CreatePcBase(llvm::LLVMContext& ctx) {
     return pc_base_var;
 }
 
+static llvm::Function* CreateMarkerFn(llvm::LLVMContext& ctx) {
+    auto marker_fn_ty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
+                                                {llvm::Type::getInt64Ty(ctx)},
+                                                false);
+    return llvm::Function::Create(marker_fn_ty,
+                                  llvm::GlobalValue::ExternalLinkage,
+                                  "instrew_instr_marker");
+}
+
+
 class InstrumenterTool {
 private:
     void* dl_handle;
@@ -102,6 +112,12 @@ public:
         }
 
         return 0;
+    }
+
+    llvm::StringRef ConfigStr() {
+        if (desc.uuid == nullptr)
+            return "";
+        return desc.uuid;
     }
 
     llvm::Function* Instrument(llvm::Function* fn) {
@@ -225,14 +241,37 @@ public:
                                                   llvm::Type::getInt64Ty(ctx));
 
         mod = std::make_unique<llvm::Module>("mod", ctx);
+
+        auto marker_fn = CreateMarkerFn(ctx);
+        mod->getGlobalList().push_back(pc_base_var);
+        for (const auto& helper_fn : helper_fns)
+            mod->getFunctionList().push_back(helper_fn);
+        mod->getFunctionList().push_back(marker_fn);
+
+        if (tool.Init(instrew_cfg, mod.get()) != 0)
+            abort();
+        if (tool.MarkInstrs()) {
+            ll_config_set_instr_marker(rlcfg, llvm::wrap(marker_fn));
+        } else {
+            marker_fn->eraseFromParent();
+            marker_fn = nullptr;
+        }
+
         llvm::Type* i8p_ty = llvm::Type::getInt8PtrTy(ctx);
         llvm::SmallVector<llvm::Constant*, 8> used;
-        mod->getGlobalList().push_back(pc_base_var);
         used.push_back(pc_base_var);
-        for (const auto& helper_fn : helper_fns) {
-            mod->getFunctionList().push_back(helper_fn);
-            used.push_back(llvm::ConstantExpr::getPointerCast(helper_fn, i8p_ty));
+
+        // Rename all tool-defined functions appropriately.
+        uint64_t zval_cnt = 1ull << 63;
+        for (llvm::Function& fn : mod->functions()) {
+            used.push_back(llvm::ConstantExpr::getPointerCast(&fn, i8p_ty));
+            if (fn.hasExternalLinkage() && !fn.empty()) {
+                std::stringstream namebuf;
+                namebuf << "Z" << std::oct << zval_cnt++ << "_";
+                fn.setName(llvm::Twine(namebuf.str() + fn.getName()));
+            }
         }
+
         llvm::ArrayType* used_ty = llvm::ArrayType::get(i8p_ty, used.size());
         llvm::GlobalVariable* llvm_used = new llvm::GlobalVariable(
                 *mod, used_ty, /*const=*/false,
@@ -240,29 +279,12 @@ public:
                 llvm::ConstantArray::get(used_ty, used), "llvm.used");
         llvm_used->setSection("llvm.metadata");
 
-        // if (tool.Init(instrew_cfg, &mod) != 0)
-        //     abort();
-        // if (tool.MarkInstrs())
-        //     ll_config_set_instr_marker(rlcfg, llvm::wrap(marker_fn));
+        codegen.GenerateCode(mod.get());
+        iw_sendobj(iwc, 0, obj_buffer.data(), obj_buffer.size(), nullptr);
 
-        // // Rename all tool-defined functions appropriately.
-        // uint64_t zval_cnt = 1ull << 63;
-        // for (llvm::Function& fn : mod->functions()) {
-        //     if (fn.empty())
-        //         continue;
-        //     std::stringstream namebuf;
-        //     namebuf << "Z" << std::oct << zval_cnt++ << "_";
-        //     fn.setName(llvm::Twine(namebuf.str() + fn.getName()));
-        // }
-
-        // codegen.GenerateCode(mod);
-
-        // for (llvm::Function& fn : init_mod.functions()) {
-        //     if (!fn.hasExternalLinkage() || fn.empty())
-        //         continue;
-        //     fn.deleteBody();
-        //     helper_fns.push_back(&fn);
-        // }
+        for (llvm::Function& fn : mod->functions())
+            if (fn.hasExternalLinkage() && !fn.empty())
+                fn.deleteBody();
 
         SHA_CTX config_sha;
         SHA1_Init(&config_sha);
@@ -276,6 +298,8 @@ public:
         SHA1_Update(&config_sha, &iwsc->tsc_host_cpu_features, sizeof iwsc->tsc_host_cpu_features);
         SHA1_Update(&config_sha, &iwsc->tsc_stack_alignment, sizeof iwsc->tsc_stack_alignment);
         SHA1_Update(&config_sha, &iwcc->tc_callconv, sizeof iwcc->tc_callconv);
+        llvm::StringRef tool_config = tool.ConfigStr();
+        SHA1_Update(&config_sha, tool_config.data(), tool_config.size());
         SHA1_Final(config_hash, &config_sha);
     }
     ~IWState() {

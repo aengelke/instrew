@@ -163,6 +163,7 @@ struct IWConnection {
     InstrewConfig cfg;
     IWServerConfig iwsc;
     IWClientConfig iwcc;
+    bool need_iwcc;
 
     RemoteMemory remote_memory;
     instrew::Cache cache;
@@ -192,6 +193,10 @@ public:
 
     void SendObject(uint64_t addr, const void* data, size_t size,
                     const uint8_t* hash) {
+        if (need_iwcc) {
+            conn.SendMsg(Msg::S_INIT, iwcc);
+            need_iwcc = false;
+        }
         conn.SendMsgHdr(Msg::S_OBJECT, size);
         conn.Write(data, size);
         if (FILE* df = OpenObjDump(addr)) {
@@ -208,16 +213,15 @@ public:
             return 1;
         }
         iwsc = conn.Read<IWServerConfig>();
+        // In mode 0, we need to respond with a client config.
+        need_iwcc = iwsc.tsc_server_mode == 0;
 
         cfg = InstrewConfig(argc - 1, argv + 1);
         cache = instrew::Cache(cfg);
 
         IWState* state = fns->init(this, cfg);
-        if (iwsc.tsc_server_mode == 0) {
-            conn.SendMsg(Msg::S_INIT, iwcc);
-            // TODO: send actual init object.
-            SendObject(0, "", 0, nullptr);
-        }
+        if (need_iwcc)
+            SendObject(0, "", 0, nullptr); // this will send the client config
 
         while (true) {
             Msg::Id msgid = conn.RecvMsg();
