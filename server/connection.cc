@@ -104,8 +104,8 @@ public:
 
 class RemoteMemory {
 private:
-    const static size_t PAGE_SIZE = 0x1000;
-    using Page = std::array<uint8_t, PAGE_SIZE>;
+    const static size_t PG_SIZE = 0x1000;
+    using Page = std::array<uint8_t, PG_SIZE>;
     std::unordered_map<uint64_t, std::unique_ptr<Page>> page_cache;
     Conn& conn;
 
@@ -118,7 +118,7 @@ private:
         if (page_it != page_cache.end())
             return page_it->second.get();
 
-        struct { uint64_t addr; size_t buf_sz; } send_buf{page_addr, PAGE_SIZE};
+        struct { uint64_t addr; size_t buf_sz; } send_buf{page_addr, PG_SIZE};
         conn.SendMsg(Msg::S_MEMREQ, send_buf);
 
         Msg::Id msgid = conn.RecvMsg();
@@ -138,15 +138,15 @@ private:
 
 public:
     size_t Get(size_t start, size_t end, uint8_t* buf) {
-        size_t start_page = start & ~(PAGE_SIZE - 1);
-        size_t end_page = end & ~(PAGE_SIZE - 1);
+        size_t start_page = start & ~(PG_SIZE - 1);
+        size_t end_page = end & ~(PG_SIZE - 1);
         size_t bytes_written = 0;
-        for (size_t cur = start_page; cur <= end_page; cur += PAGE_SIZE) {
+        for (size_t cur = start_page; cur <= end_page; cur += PG_SIZE) {
             Page* page = GetPage(cur);
             if (!page)
                 break;
-            size_t start_off = cur < start ? (start & (PAGE_SIZE - 1)) : 0;
-            size_t end_off = cur + PAGE_SIZE > end ? (end & (PAGE_SIZE - 1)) : PAGE_SIZE;
+            size_t start_off = cur < start ? (start & (PG_SIZE - 1)) : 0;
+            size_t end_off = cur + PG_SIZE > end ? (end & (PG_SIZE - 1)) : PG_SIZE;
             std::copy(page->data() + start_off, page->data() + end_off, buf + bytes_written);
             bytes_written += end_off - start_off;
         }
