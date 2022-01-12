@@ -2,6 +2,7 @@
 #include <common.h>
 
 #include <elf.h>
+#include <limits.h>
 #if defined(__x86_64__)
 #include <asm/prctl.h>
 #endif
@@ -9,6 +10,7 @@
 
 extern int main(int argc, char** argv);
 void __start_main(const size_t* initial_stack, const size_t* dynv);
+void __restore();
 
 #if UINTPTR_MAX == 0xffffffff
 #define ELF_R_TYPE ELF32_R_TYPE
@@ -65,6 +67,14 @@ __clone:
     syscall;
 
  1: ret;
+    .att_syntax;
+);
+
+ASM_BLOCK(
+    .intel_syntax noprefix;
+__restore:
+    mov rax, __NR_rt_sigreturn;
+    syscall;
     .att_syntax;
 );
 
@@ -168,6 +178,12 @@ __clone:
     svc 0;
 
  1: ret;
+);
+
+ASM_BLOCK(
+__restore:
+    mov x8, __NR_rt_sigreturn;
+    svc 0;
 );
 
 static
@@ -649,6 +665,94 @@ printf(const char* format, ...)
     va_end(args);
 
     return result;
+}
+
+// Hack: ensure that sigset_t is actually an unsigned long.
+_Static_assert(sizeof(sigset_t) == _NSIG/8, "sigset_t size mismatch");
+
+static unsigned long*
+sigsetptr(sigset_t* set, int signum) {
+#if defined(__x86_64__)
+    _Static_assert(_Generic((sigset_t) 0, unsigned long: 1, default: 0),
+                   "sigset_t should be an unsigned long");
+    (void) signum;
+    return set;
+#else
+    return &set->sig[signum / 8 / sizeof *set->sig];
+#endif
+}
+
+static unsigned long
+sigsetmsk(int signum) {
+#if defined(__x86_64__)
+    return 1ul << (signum - 1);
+#else
+    return 1ul << ((signum - 1) & (8 * sizeof(*((sigset_t*) NULL)->sig) - 1));
+#endif
+}
+
+int
+sigemptyset(sigset_t* set) {
+    memset(set, 0, sizeof *set);
+    return 0;
+}
+
+int
+sigfillset(sigset_t* set) {
+    memset(set, 0xff, sizeof *set);
+    return 0;
+}
+
+int
+sigaddset(sigset_t* set, int signum) {
+    if (signum <= 0 || signum > _NSIG)
+        return -EINVAL;
+    *sigsetptr(set, signum) |= sigsetmsk(signum);
+    return 0;
+}
+
+int
+sigdelset(sigset_t* set, int signum) {
+    if (signum <= 0 || signum > _NSIG)
+        return -EINVAL;
+    *sigsetptr(set, signum) &= ~sigsetmsk(signum);
+    return 0;
+}
+
+int
+sigismember(const sigset_t* set, int signum) {
+    if (signum <= 0 || signum > _NSIG)
+        return -EINVAL;
+    return (*sigsetptr((sigset_t*) set, signum) & sigsetmsk(signum)) != 0;
+}
+
+int
+sigaction(int num, const struct sigaction* restrict act,
+          struct sigaction* restrict oact) {
+    struct sigaction kact;
+    if (act) {
+        kact = *act;
+        kact.sa_flags |= SA_RESTORER;
+        kact.sa_restorer = __restore;
+        act = &kact;
+    }
+    return syscall4(__NR_rt_sigaction, num, (uintptr_t) act, (uintptr_t) oact,
+                    _NSIG/8);
+}
+
+int
+sigprocmask(int how, const sigset_t* restrict set, sigset_t* restrict old) {
+    return syscall4(__NR_rt_sigprocmask, how, (uintptr_t) set, (uintptr_t) old,
+                    _NSIG/8);
+}
+
+int
+sigsuspend(const sigset_t* set) {
+    return syscall2(__NR_rt_sigsuspend, (uintptr_t) set, _NSIG/8);
+}
+
+int kill(pid_t pid, int sig) {
+    return syscall2(__NR_kill, pid, sig);
 }
 
 unsigned long getauxval(unsigned long type) {

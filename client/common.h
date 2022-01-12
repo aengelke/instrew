@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <asm/signal.h>
 #include <linux/errno.h>
 #include <linux/fcntl.h>
 #include <linux/posix_types.h>
@@ -76,6 +77,23 @@ char* strchr(const char* s, int c);
 void* memset(void* s, int c, size_t n);
 int memcmp(const void* s1, const void* s2, size_t n);
 void* memcpy(void* dest, const void* src, size_t n);
+
+// signal.h
+#ifndef _NSIG
+#define _NSIG 64
+#else
+_Static_assert(_NSIG == 64, "_NSIG mismtach");
+#endif
+int kill(pid_t pid, int sig);
+int sigemptyset(sigset_t* set);
+int sigfillset(sigset_t* set);
+int sigaddset(sigset_t* set, int signum);
+int sigdelset(sigset_t* set, int signum);
+int sigismember(const sigset_t* set, int signum);
+int sigaction(int signum, const struct sigaction* restrict act,
+              struct sigaction* restrict oact);
+int sigprocmask(int how, const sigset_t* restrict set, sigset_t* restrict old);
+int sigsuspend(const sigset_t* set);
 
 int execve(const char* filename, const char* const argv[], const char* const envp[]);
 int dup2(int oldfd, int newfd);
