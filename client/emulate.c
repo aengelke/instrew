@@ -3,12 +3,192 @@
 
 #include <emulate.h>
 
+#include <asm/sigcontext.h>
+#include <asm/siginfo.h>
+#include <asm/signal.h>
 #include <asm/stat.h>
+#include <asm/ucontext.h>
 #include <linux/sched.h>
 #include <linux/utsname.h>
 
 #include <state.h>
 
+
+// SIG_DFL should be zero, so zero-initializing sigact is sufficient
+_Static_assert(SIG_DFL == 0, "SIG_DFL mismtach");
+// We currently only support guest--host combinations with identical signal nums
+_Static_assert(SIGUSR1 == 10, "SIGUSR10 mismtach");
+
+static _Noreturn void
+abort_with_signal(int sig) {
+    struct sigaction act;
+    act.sa_handler = SIG_DFL;
+    act.sa_flags = 0;
+    sigfillset(&act.sa_mask);
+    sigaction(sig, &act, NULL); // change handler to SIG_DFL
+    kill(getpid(), sig); // send signal to ourselves
+    sigdelset(&act.sa_mask, sig);
+    sigsuspend(&act.sa_mask); // wait for signal to get delivered
+    __builtin_unreachable();
+}
+
+static int
+signal_update_hostmask(struct CpuState* cpu_state) {
+    sigset_t hostmask = cpu_state->sigmask;
+    sigdelset(&hostmask, SIGSEGV);
+    sigdelset(&hostmask, SIGBUS);
+    return sigprocmask(SIG_SETMASK, &hostmask, NULL);
+}
+
+static void
+signal_handle(struct CpuState* cpu_state) {
+    int sig = cpu_state->sigpending;
+    cpu_state->sigpending = 0;
+
+    // Copy act to reduce likelihood of race. TODO: make this thread-safe.
+    struct sigaction act = cpu_state->state->sigact[sig - 1];
+    if (act.sa_handler == SIG_DFL) {
+        abort_with_signal(sig);
+    } else if (act.sa_handler == SIG_IGN) {
+        // do nothing
+    } else {
+        dprintf(2, "guest signal handling not implemented! %d\n", sig);
+        abort_with_signal(sig);
+
+        // TODO: setup signal stack frame and update registers/guest pc
+
+        for (int i = 1; i <= _NSIG; i++)
+            if (sigismember(&act.sa_mask, i))
+                sigaddset(&cpu_state->sigmask, i);
+        signal_update_hostmask(cpu_state);
+
+        if (act.sa_flags & SA_RESETHAND)
+            cpu_state->state->sigact[sig - 1].sa_handler = SIG_DFL;
+    }
+}
+
+static void
+signal_sigreturn(struct CpuState* cpu_state) {
+    (void) cpu_state;
+    dprintf(2, "guest sigreturn not implemented!\n");
+    abort_with_signal(SIGABRT);
+}
+
+static void
+signal_handler(int sig, struct siginfo* info, void* ucp) {
+    struct CpuState* cpu_state = get_thread_area();
+    if ((sig == SIGSEGV || sig == SIGBUS) && info->si_code > 0) {
+        // Synchronous signal.
+        // Need to get out of translated code to handle signal.
+        // Maybe we need to invalidate some parts of the code cache in future.
+        // But for now, just abort.
+        if (cpu_state->state->sigact[sig - 1].sa_handler != SIG_DFL)
+            dprintf(2, "handling of synchronous signals not implemented\n");
+        abort_with_signal(sig);
+    }
+
+    // Should only happen for SIGSEGV and SIGBUS, which we never mask.
+    if (sigismember(&cpu_state->sigmask, sig)) {
+        dprintf(2, "dropping asynchronous blocked signal %d\n", sig);
+        return;
+    }
+
+    // Asynchronous signal. Mark as pending and store info in CPU state.
+    // But: keep signals masked so that only ever at most one signal is pending.
+    // TODO: this is a very simple and INCORRECT implementation of signals.
+    cpu_state->sigpending = sig;
+    cpu_state->siginfo = *info;
+    // Keep all signals masked until guest signal handler executed.
+    struct ucontext* uc = ucp;
+    sigfillset(&uc->uc_sigmask);
+    sigdelset(&uc->uc_sigmask, SIGSEGV);
+    sigdelset(&uc->uc_sigmask, SIGBUS);
+}
+
+static int
+signal_sigaction(struct CpuState* cpu_state, int sig,
+                 const struct sigaction* restrict nact,
+                 struct sigaction* restrict oact) {
+    struct State* state = cpu_state->state;
+    if (sig <= 0 || sig > _NSIG)
+        return -EINVAL;
+    if (oact)
+        *oact = state->sigact[sig - 1];
+    if (!nact)
+        return 0;
+
+    state->sigact[sig - 1] = *nact;
+    if (sig == SIGSEGV || sig == SIGBUS)
+        return 0;
+
+    struct sigaction act;
+    if (nact->sa_handler == SIG_DFL || nact->sa_handler == SIG_IGN)
+        act.sa_handler = nact->sa_handler;
+    else
+        act.sa_handler = (void(*)()) signal_handler;
+    // Only SA_RESTART can be passed, other's have to be emulated.
+    act.sa_flags = SA_SIGINFO;
+    if (nact->sa_flags & SA_RESTART)
+        act.sa_flags |= SA_RESTART;
+    sigfillset(&act.sa_mask);
+    return sigaction(sig, &act, NULL);
+}
+
+static int
+signal_sigprocmask(struct CpuState* cpu_state, int how,
+                   const sigset_t* restrict set, sigset_t* restrict oldset) {
+    if (oldset)
+        *oldset = cpu_state->sigmask;
+    if (!set)
+        return 0;
+    if (how == SIG_BLOCK) {
+        for (int i = 1; i <= _NSIG; i++)
+            if (sigismember(set, i))
+                sigaddset(&cpu_state->sigmask, i);
+    } else if (how == SIG_UNBLOCK) {
+        for (int i = 1; i <= _NSIG; i++)
+            if (sigismember(set, i))
+                sigdelset(&cpu_state->sigmask, i);
+    } else if (how == SIG_SETMASK) {
+        cpu_state->sigmask = *set;
+    } else {
+        return -EINVAL;
+    }
+    sigdelset(&cpu_state->sigmask, SIGKILL);
+    sigdelset(&cpu_state->sigmask, SIGSTOP);
+    // Only update host mask if there is no signal pending, otherwise, we could
+    // end up with multiple queued signals (the handler keeps signals blocked).
+    if (!cpu_state->sigpending)
+        return signal_update_hostmask(cpu_state);
+    return 0;
+}
+
+static int
+signal_sigaltstack(struct CpuState* cpu_state, const stack_t *restrict ss,
+                   stack_t *restrict old_ss) {
+    if (old_ss)
+        *old_ss = cpu_state->sigaltstack;
+    if (!ss)
+        return 0;
+
+    // TODO: verify flags, size, and that current stack is not in use (EPERM).
+    cpu_state->sigaltstack = *ss;
+    return 0;
+}
+
+void
+signal_init(struct State* state) {
+    // state->sigact will be zero-initialized, i.e. SIG_DFL.
+    (void) state;
+
+    struct sigaction act;
+    // actually this should be act.sa_sigaction.
+    act.sa_handler = (void(*)()) signal_handler;
+    act.sa_flags = SA_SIGINFO;
+    sigfillset(&act.sa_mask);
+    sigaction(SIGSEGV, &act, NULL);
+    sigaction(SIGBUS, &act, NULL);
+}
 
 #ifdef __aarch64__
 static unsigned
@@ -282,6 +462,9 @@ emulate_syscall(uint64_t* cpu_regs) {
         }
         res = syscall(__NR_dup3, arg0, arg1, 0, 0, 0, 0);
         break;
+    case 34: // pause (wait for signal)
+        res = syscall(__NR_ppoll, 0, 0, 0, 0, 0, 0);
+        break;
 
     case 72: // fcntl
         switch (arg0) {
@@ -337,13 +520,38 @@ emulate_syscall(uint64_t* cpu_regs) {
     }
 
 
-    // Finally, some syscalls are not supported yet.
+    // Finally, signal handling is a mess and requires a lot more effort.
     case 13: // rt_sigaction
+        if (arg3 != sizeof(sigset_t))
+            res = -EINVAL;
+        else
+            res = signal_sigaction(cpu_state, arg0, (void*) arg1, (void*) arg2);
+        break;
     case 14: // rt_sigprocmask
+        if (arg3 != sizeof(sigset_t))
+            res = -EINVAL;
+        else
+            res = signal_sigprocmask(cpu_state, arg0, (void*) arg1, (void*) arg2);
+        break;
     case 15: // rt_sigreturn
+        signal_sigreturn(cpu_state);
+        return; // Note -- we don't have a result here.
+    case 127: // rt_sigpending
+        if (arg1 != sizeof(sigset_t))
+            res = -EINVAL;
+        else
+            res = syscall(__NR_rt_sigpending, arg0, arg1, 0, 0, 0, 0);
+        break;
+    // case 128: // rt_sigtimedwait
+    // case 129: // rt_sigqueueinfo
+    case 130: // rt_sigsuspend
+        if (arg1 != sizeof(sigset_t))
+            res = -EINVAL;
+        else
+            res = syscall(__NR_rt_sigsuspend, arg0, arg1, 0, 0, 0, 0);
+        break;
     case 131: // sigaltstack
-        // dprintf(2, "unsupported syscall %u, ignoring\n", nr);
-        res = -ENOSYS;
+        res = signal_sigaltstack(cpu_state, (void*) arg0, (void*) arg1);
         break;
     }
 
@@ -352,12 +560,16 @@ end:
     //         nr, arg0, arg1, arg2, arg3, arg4, arg5, res, res);
 
     cpu_regs[1] = res;
+
+    if (cpu_state->sigpending)
+        signal_handle(cpu_state);
 }
 
 void emulate_rv64_syscall(uint64_t* cpu_regs);
 
 void
 emulate_rv64_syscall(uint64_t* cpu_regs) {
+    struct CpuState* cpu_state = CPU_STATE_FROM_REGS(cpu_regs);
     uint64_t arg0 = cpu_regs[11], arg1 = cpu_regs[12], arg2 = cpu_regs[13],
              arg3 = cpu_regs[14], arg4 = cpu_regs[15], arg5 = cpu_regs[16];
     uint64_t nr = cpu_regs[18]; // a7/x17
@@ -512,14 +724,43 @@ emulate_rv64_syscall(uint64_t* cpu_regs) {
     case 276: nr = __NR_renameat2; goto native;
     case 278: nr = __NR_getrandom; goto native;
 
-    // Finally, some syscalls are not supported yet.
-    case 132: // sigaltstack
+    // Finally, signal handling is a mess and requires a lot more effort.
     case 134: // rt_sigaction
+        if (arg3 != sizeof(sigset_t))
+            res = -EINVAL;
+        else
+            res = signal_sigaction(cpu_state, arg0, (void*) arg1, (void*) arg2);
+        break;
     case 135: // rt_sigprocmask
+        if (arg3 != sizeof(sigset_t))
+            res = -EINVAL;
+        else
+            res = signal_sigprocmask(cpu_state, arg0, (void*) arg1, (void*) arg2);
+        break;
     case 139: // rt_sigreturn
-        res = -ENOSYS;
+        signal_sigreturn(cpu_state);
+        return; // Note -- we don't have a result here.
+    case 136: // rt_sigpending
+        if (arg1 != sizeof(sigset_t))
+            res = -EINVAL;
+        else
+            res = syscall(__NR_rt_sigpending, arg0, arg1, 0, 0, 0, 0);
+        break;
+    // case 137: // rt_sigtimedwait
+    // case 138: // rt_sigqueueinfo
+    case 133: // rt_sigsuspend
+        if (arg1 != sizeof(sigset_t))
+            res = -EINVAL;
+        else
+            res = syscall(__NR_rt_sigsuspend, arg0, arg1, 0, 0, 0, 0);
+        break;
+    case 132: // sigaltstack
+        res = signal_sigaltstack(cpu_state, (void*) arg0, (void*) arg1);
         break;
     }
 
     cpu_regs[11] = res;
+
+    if (cpu_state->sigpending)
+        signal_handle(cpu_state);
 }

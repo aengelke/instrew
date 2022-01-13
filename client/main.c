@@ -6,6 +6,7 @@
 
 #include <dispatch.h>
 #include <elf-loader.h>
+#include <emulate.h>
 #include <memory.h>
 #include <rtld.h>
 #include <state.h>
@@ -84,6 +85,8 @@ int main(int argc, char** argv) {
         puts("usage: [OPTIONS] EXECUTABLE [ARGS...]");
         return 1;
     }
+
+    signal_init(&state);
 
     retval = mem_init();
     if (retval < 0) {

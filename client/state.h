@@ -6,6 +6,10 @@
 #include <rtld.h>
 #include <translator.h>
 
+#include <asm/siginfo.h>
+#include <asm/signal.h>
+
+
 struct State {
     Rtld rtld;
     Translator translator;
@@ -18,6 +22,8 @@ struct State {
         bool print_regs;
         bool profile_rewriting;
     } config;
+
+    struct sigaction sigact[_NSIG];
 
     struct TranslatorServerConfig tsc;
     struct TranslatorConfig tc;
@@ -33,6 +39,11 @@ struct CpuState {
     _Alignas(64) uint8_t regdata[0x400];
 
     _Alignas(64) uint64_t quick_tlb[1 << QUICK_TLB_BITS][2];
+
+    _Atomic volatile int sigpending;
+    sigset_t sigmask;
+    stack_t sigaltstack;
+    struct siginfo siginfo;
 };
 
 #define CPU_STATE_REGDATA_OFFSET 0x40
