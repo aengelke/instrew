@@ -40,7 +40,7 @@ private:
         llvm::Value* sptr = &wrap_fn->arg_begin()[0];
         unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
         llvm::Type* i64p_sptr = irb.getInt64Ty()->getPointerTo(sptr_as);
-        llvm::Value* rax_ptr = irb.CreateConstGEP1_64(sptr, 0x8);
+        llvm::Value* rax_ptr = irb.CreateConstGEP1_64(irb.getInt8Ty(), sptr, 0x8);
         rax_ptr = irb.CreatePointerCast(rax_ptr, i64p_sptr);
         llvm::Value* rax = irb.CreateLoad(irb.getInt64Ty(), rax_ptr);
         // TODO: non-x86-64
@@ -48,9 +48,9 @@ private:
         irb.CreateCondBr(is_exit, bb2, bb3);
 
         irb.SetInsertPoint(bb2);
-        llvm::Value* count_ptr = irb.CreateConstGEP1_64(sptr, -0x30);
+        llvm::Value* count_ptr = irb.CreateConstGEP1_64(irb.getInt8Ty(), sptr, -0x30);
         count_ptr = irb.CreatePointerCast(count_ptr, i64p_sptr);
-        llvm::Value* count_ld = irb.CreateLoad(count_ptr);
+        llvm::Value* count_ld = irb.CreateLoad(irb.getInt64Ty(), count_ptr);
         const char* fmt_str = "Instruction count: 0x%lx\n";
         llvm::Constant* syscall_pre_fmt = irb.CreateGlobalStringPtr(fmt_str);
         irb.CreateCall(dprintf_fn, {irb.getInt64(2), syscall_pre_fmt, count_ld});
@@ -92,7 +92,7 @@ public:
         // Construct pointer to "instruction counter" in entry block.
         unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
         llvm::Type* count_ptr_ty = irb.getInt64Ty()->getPointerTo(sptr_as);
-        llvm::Value* count_ptr = irb.CreateConstGEP1_64(sptr, -0x30);
+        llvm::Value* count_ptr = irb.CreateConstGEP1_64(irb.getInt8Ty(), sptr, -0x30);
         count_ptr = irb.CreatePointerCast(count_ptr, count_ptr_ty);
 
         // We can't remove instructions when iterating, so store call sites.
@@ -118,7 +118,7 @@ public:
             // basic blocks.
             if (instr_count > 0) {
                 irb.SetInsertPoint(bb.getFirstNonPHI());
-                llvm::Value* count_ld = irb.CreateLoad(count_ptr);
+                llvm::Value* count_ld = irb.CreateLoad(irb.getInt64Ty(), count_ptr);
                 llvm::Value* offset = irb.getInt64(instr_count);
                 llvm::Value* count_new = irb.CreateAdd(count_ld, offset);
                 irb.CreateStore(count_new, count_ptr);

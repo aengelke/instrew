@@ -162,7 +162,8 @@ struct CCState {
         unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
         for (unsigned i = 0; i < fields.size(); i++) {
             llvm::Value* val = GetValue(fields[i], call, irb);
-            llvm::Value* gep = irb.CreateConstGEP1_64(sptr, fields[i].offset);
+            llvm::Type* i8 = irb.getInt8Ty();
+            llvm::Value* gep = irb.CreateConstGEP1_64(i8, sptr, fields[i].offset);
             llvm::Type* ptr_ty = val->getType()->getPointerTo(sptr_as);
             irb.CreateStore(val, irb.CreatePointerCast(gep, ptr_ty));
         }
@@ -224,8 +225,7 @@ struct CCState {
         return vals;
     }
 
-    void UpdateCallRet(llvm::Instruction* callret, bool sptr_escapes,
-                       FoldedStores& vals) {
+    void UpdateCallRet(llvm::Instruction* callret, FoldedStores& vals) {
         llvm::IRBuilder<> irb(callret);
         auto ret_ty = llvm::cast<llvm::StructType>(nfn->getReturnType());
         unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
@@ -237,7 +237,8 @@ struct CCState {
                 continue;
             }
             // Need to load
-            llvm::Value* gep = irb.CreateConstGEP1_64(sptr, fields[i].offset);
+            llvm::Type* i8 = irb.getInt8Ty();
+            llvm::Value* gep = irb.CreateConstGEP1_64(i8, sptr, fields[i].offset);
             llvm::Value* ptr = irb.CreatePointerCast(gep, elem_ty->getPointerTo(sptr_as));
             vals[i] = irb.CreateLoad(elem_ty, ptr);
         }
@@ -266,8 +267,10 @@ struct CCState {
             call->replaceAllUsesWith(newcall);
         } else {
             llvm::Value* ret_val = llvm::UndefValue::get(ret_ty);
-            if (sptr_ret_idx >= 0)
-                ret_val = irb.CreateInsertValue(ret_val, sptr, {sptr_ret_idx});
+            if (sptr_ret_idx >= 0) {
+                unsigned idx_u = static_cast<unsigned>(sptr_ret_idx);
+                ret_val = irb.CreateInsertValue(ret_val, sptr, {idx_u});
+            }
             for (unsigned i = 0; i < fields.size(); i++)
                 ret_val = irb.CreateInsertValue(ret_val, vals[i], {fields[i].retidx});
             irb.CreateRet(ret_val);
@@ -380,7 +383,6 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
                 {i64, i64, i64, i64, i64, i64, i64, sptr_ty, i64, i64, i64,
                  v2i64, v2i64, v2i64, v2i64, v2i64, v2i64, v2i64, v2i64,
                  v2i64, v2i64, v2i64, v2i64, v2i64, v2i64, v2i64}, false);
-    callconv_x86_rc_common:
 
         nfn = llvm::Function::Create(fn_ty, linkage, fn->getName() + "_rc", mod);
         nfn->copyAttributesFrom(fn);
@@ -678,7 +680,7 @@ end_escape:
     }
 
     for (auto& [callret, stores] : callret_stores)
-        ccs.UpdateCallRet(callret, sptr_escapes, stores);
+        ccs.UpdateCallRet(callret, stores);
 
     return nfn;
 }

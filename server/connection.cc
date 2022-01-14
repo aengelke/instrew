@@ -182,6 +182,7 @@ private:
 
 public:
     bool CacheProbe(uint64_t addr, const uint8_t* hash) {
+        (void) addr;
         auto res = cache.Get(hash);
         if (res.first < 0)
             return false;

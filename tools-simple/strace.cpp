@@ -35,7 +35,7 @@ private:
         llvm::Value* sptr = &wrap_fn->arg_begin()[0];
         unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
         llvm::Type* i64p_sptr = irb.getInt64Ty()->getPointerTo(sptr_as);
-        llvm::Value* rax_ptr = irb.CreateConstGEP1_64(sptr, 0x8);
+        llvm::Value* rax_ptr = irb.CreateConstGEP1_64(irb.getInt8Ty(), sptr, 0x8);
         rax_ptr = irb.CreatePointerCast(rax_ptr, i64p_sptr);
         llvm::Value* rax = irb.CreateLoad(irb.getInt64Ty(), rax_ptr);
 
