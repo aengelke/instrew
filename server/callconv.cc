@@ -287,7 +287,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     llvm::Type* sptr_ty = fn->arg_begin()[0].getType();
     unsigned sptr_as = sptr_ty->getPointerAddressSpace();
     llvm::Type* i64 = llvm::Type::getInt64Ty(ctx);
-    llvm::Type* v2i64 = llvm::VectorType::get(i64, 2);
+    llvm::Type* v2i64 = llvm::VectorType::get(i64, 2, false);
 
     llvm::Function* call_fn_cdecl = mod->getFunction("instrew_call_cdecl");
     llvm::Function* tail_fn = nullptr;

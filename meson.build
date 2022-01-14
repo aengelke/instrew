@@ -29,7 +29,7 @@ add_project_arguments(['-Wmissing-field-initializers',
 
 add_global_arguments(['-fno-rtti'], language: 'cpp')
 
-llvm_version = ['>=8', '<12']
+llvm_version = ['>=11', '<14']
 # First, attempt to use the shared library.
 libllvm = dependency('llvm', version: llvm_version, static: false,
                      method: 'config-tool', required: false)
@@ -39,6 +39,7 @@ if not libllvm.found()
                        method: 'config-tool',
                        modules: ['x86', 'aarch64', 'riscv', 'analysis', 'passes'])
 endif
+add_project_arguments(['-DLL_LLVM_MAJOR='+libllvm.version().split('.')[0]], language: 'cpp')
 
 libcrypto = dependency('libcrypto')
 

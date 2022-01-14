@@ -10,7 +10,7 @@ jobs:
     - name: Init submodules
       run: git submodule update --init --force --recursive
     - name: Install dependencies
-      run: sudo apt install -y ninja-build llvm-9-dev meson
+      run: sudo apt install -y ninja-build llvm-11-dev meson
     - name: Configure
       run: mkdir build; meson -Dbuildtype=debugoptimized build
     - name: Build

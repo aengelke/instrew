@@ -3,6 +3,7 @@
 
 #include "config.h"
 
+#include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/IR/IRPrintingPasses.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
@@ -27,12 +28,12 @@
 
 void Optimizer::Optimize(llvm::Function* fn) {
     llvm::PassBuilder pb;
-    llvm::FunctionPassManager fpm(false);
+    llvm::FunctionPassManager fpm{};
 
-    llvm::LoopAnalysisManager lam(false);
-    llvm::FunctionAnalysisManager fam(false);
-    llvm::CGSCCAnalysisManager cgam(false);
-    llvm::ModuleAnalysisManager mam(false);
+    llvm::LoopAnalysisManager lam{};
+    llvm::FunctionAnalysisManager fam{};
+    llvm::CGSCCAnalysisManager cgam{};
+    llvm::ModuleAnalysisManager mam{};
 
     // Register the AA manager first so that our version is the one used.
     fam.registerPass([&] { return pb.buildDefaultAAPipeline(); });

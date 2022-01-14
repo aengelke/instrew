@@ -16,6 +16,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassTimingInfo.h>
+#include <llvm/Pass.h>
 #include <llvm/Support/CommandLine.h>
 #include <openssl/sha.h>
 
@@ -23,6 +24,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
+#include <deque>
 #include <dlfcn.h>
 #include <elf.h>
 #include <fstream>
@@ -176,7 +178,6 @@ public:
         iwsc = iw_get_sc(iwc);
         iwcc = iw_get_cc(iwc);
 
-        llvm::cl::ParseEnvironmentOptions("instrew-server", "INSTREW_SERVER_LLVM_OPTS");
         llvm::TimePassesIsEnabled = instrew_cfg.timepasses;
 
         rlcfg = ll_config_new();
@@ -241,6 +242,10 @@ public:
                                                   llvm::Type::getInt64Ty(ctx));
 
         mod = std::make_unique<llvm::Module>("mod", ctx);
+#if LL_LLVM_MAJOR >= 13
+        if (iwsc->tsc_stack_alignment != 0)
+            mod->setOverrideStackAlignment(iwsc->tsc_stack_alignment);
+#endif
 
         auto marker_fn = CreateMarkerFn(ctx);
         mod->getGlobalList().push_back(pc_base_var);

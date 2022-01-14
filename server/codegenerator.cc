@@ -36,8 +36,11 @@ public:
 
         llvm::TargetOptions target_options;
         target_options.EnableFastISel = 1; // Use FastISel for CodeGenOpt::None
+#if LL_LLVM_MAJOR < 13
+        // In LLVM13+, Module::setOverrideStackAlignment is used instead.
         if (server_config.tsc_stack_alignment != 0)
             target_options.StackAlignmentOverride = server_config.tsc_stack_alignment;
+#endif
 
         std::string triple;
         llvm::CodeModel::Model cm;
@@ -56,6 +59,12 @@ public:
             abort();
         }
 
+        llvm::Reloc::Model rm = llvm::Reloc::Static;
+        // For non-PIC code, we use the small code model. Since we don't link
+        // objects to 32-bit addresses, these must be addressed PC-relative.
+        if (!cfg.pic)
+            rm = llvm::Reloc::PIC_;
+
         std::string error;
         const llvm::Target* the_target = llvm::TargetRegistry::lookupTarget(triple, error);
         if (!the_target) {
@@ -66,7 +75,7 @@ public:
         target = the_target->createTargetMachine(
             /*TT=*/triple, /*CPU=*/"",
             /*Features=*/"", /*Options=*/target_options,
-            /*RelocModel=*/llvm::Reloc::Static,
+            /*RelocModel=*/rm,
             /*CodeModel=*/cm,
             /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(cfg.targetopt),
             /*JIT=*/true
