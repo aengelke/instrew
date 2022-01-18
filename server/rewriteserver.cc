@@ -195,15 +195,6 @@ public:
         if (iwsc->tsc_guest_arch == EM_X86_64) {
             ll_config_set_architecture(rlcfg, "x86-64");
             decode_fn = DecodeX86_64;
-            iwcc->tc_callconv = 0; // cdecl
-            // TODO: check host arch
-            if (instrew_cfg.callconv == 2) {
-                instrew_cc = CallConv::HHVM;
-                iwcc->tc_callconv = 1;
-            } else if (instrew_cfg.callconv == 5) {
-                instrew_cc = CallConv::X86_AARCH64_X;
-                iwcc->tc_callconv = 3;
-            }
 
             auto syscall_fn = CreateFunc(ctx, "syscall");
             helper_fns.push_back(syscall_fn);
@@ -221,10 +212,6 @@ public:
         } else if (iwsc->tsc_guest_arch == EM_RISCV) {
             ll_config_set_architecture(rlcfg, "rv64");
             decode_fn = DecodeRV64;
-            if (iwsc->tsc_host_arch == EM_X86_64 && instrew_cfg.callconv == 2) {
-                instrew_cc = CallConv::RV64_X86_HHVM;
-                iwcc->tc_callconv = 1;
-            }
 
             auto syscall_fn = CreateFunc(ctx, "syscall_rv64");
             helper_fns.push_back(syscall_fn);
@@ -233,6 +220,13 @@ public:
             std::cerr << "error: unsupported architecture" << std::endl;
             abort();
         }
+
+        // Backward compatibility -- only one fast CC per guest--host pair now.
+        if (instrew_cfg.callconv >= 1 && instrew_cfg.callconv < 6)
+            instrew_cc = GetFastCC(iwsc->tsc_host_arch, iwsc->tsc_guest_arch);
+        else
+            instrew_cc = CallConv::CDECL;
+        iwcc->tc_callconv = GetCallConvClientNumber(instrew_cc);
 
         llvm::GlobalVariable* pc_base_var = CreatePcBase(ctx);
         pc_base = llvm::ConstantExpr::getPtrToInt(pc_base_var,

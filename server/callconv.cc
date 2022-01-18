@@ -13,10 +13,31 @@
 #include <chrono>
 #include <unistd.h>
 #include <bitset>
+#include <elf.h>
 #include <iostream>
 #include <optional>
 #include <sstream>
 
+
+CallConv GetFastCC(int host_arch, int guest_arch) {
+    if (host_arch == EM_X86_64 && guest_arch == EM_X86_64)
+        return CallConv::HHVM;
+    if (host_arch == EM_X86_64 && guest_arch == EM_RISCV)
+        return CallConv::RV64_X86_HHVM;
+    if (host_arch == EM_AARCH64 && guest_arch == EM_X86_64)
+        return CallConv::X86_AARCH64_X;
+    return CallConv::CDECL;
+}
+
+int GetCallConvClientNumber(CallConv cc) {
+    switch (cc) {
+    case CallConv::CDECL: return 0;
+    case CallConv::HHVM: return 1;
+    case CallConv::RV64_X86_HHVM: return 1;
+    case CallConv::X86_AARCH64_X: return 3;
+    default: return 0;
+    }
+}
 
 static uint64_t pointerOffset(llvm::Value* base, llvm::Value* ptr,
                              const llvm::DataLayout& DL) {

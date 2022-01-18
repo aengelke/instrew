@@ -12,6 +12,8 @@ enum class CallConv {
     X86_AARCH64_X,
 };
 
+CallConv GetFastCC(int host_arch, int guest_arch);
+int GetCallConvClientNumber(CallConv cc);
 llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc);
 
 #endif
