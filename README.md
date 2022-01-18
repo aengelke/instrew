@@ -1,8 +1,8 @@
 # Instrew — LLVM-based Dynamic Binary Instrumentation
 
-[![Build Status](https://github.com/aengelke/instrew/workflows/CI/badge.svg)](https://github.com/aengelke/instrew/actions?query=workflow%3ACI)
+[![builds.sr.ht status](https://builds.sr.ht/~aengelke/instrew.svg)](https://builds.sr.ht/~aengelke/instrew?)
 
-Instrew is a performance-targeted transparent dynamic binary rewriter/translator/instrumenter based on LLVM targeting. Currently supported source/guest architectures are x86-64 and RISC-V64 (rv64imafdc); supported host architectures are x86-64 and AArch64. The original code is lifted to LLVM-IR using [Rellume](https://github.com/aengelke/rellume), where it can be modified and from which new machine code is generated using LLVM's MCJIT compiler.
+Instrew is a performance-targeted transparent dynamic binary translator/instrumenter based on LLVM. Currently supported source/guest architectures are x86-64 and RISC-V64 (rv64imafdc); supported host architectures are x86-64 and AArch64. The original code is lifted to LLVM-IR using [Rellume](https://github.com/aengelke/rellume), where it can be modified and from which new machine code is generated using LLVM's JIT compiler.
 
 ### Architecture
 
@@ -10,8 +10,8 @@ Instrew implements a two-process client/server architecture: the light-weight cl
 
 ### Publications
 
-- Alexis Engelke, Dominik Okwieka, and Martin Schulz. 2021. Efficient LLVM-Based Dynamic Binary Translation. In 17th ACM SIGPLAN/SIGOPS International Conference on Virtual Execution Environments (VEE ’21), April 16, 2020. *Accepted, Link will follow*
-- Alexis Engelke and Martin Schulz. 2020. Instrew: Leveraging LLVM for High Performance Dynamic Binary Instrumentation. In 16th ACM SIGPLAN/SIGOPS International Conference on Virtual Execution Environments (VEE ’20), March 17, 2020, Lausanne, Switzerland. [Paper](https://home.in.tum.de/~engelke/pubs/2003-vee.pdf) -- Please cite this paper when referring to Instrew in general.
+- Alexis Engelke, Dominik Okwieka, and Martin Schulz. Efficient LLVM-Based Dynamic Binary Translation. In 17th ACM SIGPLAN/SIGOPS International Conference on Virtual Execution Environments (VEE ’21), April 16, 2021. [Paper](https://home.in.tum.de/~engelke/pubs/2104-vee.pdf)
+- Alexis Engelke and Martin Schulz. Instrew: Leveraging LLVM for High Performance Dynamic Binary Instrumentation. In 16th ACM SIGPLAN/SIGOPS International Conference on Virtual Execution Environments (VEE ’20), March 17, 2020, Lausanne, Switzerland. [Paper](https://home.in.tum.de/~engelke/pubs/2003-vee.pdf) -- Please cite this paper when referring to Instrew in general.
 
 ### License
 Instrew is licensed under LGPLv2.1+.
