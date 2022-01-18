@@ -200,9 +200,6 @@ public:
             if (instrew_cfg.callconv == 2) {
                 instrew_cc = CallConv::HHVM;
                 iwcc->tc_callconv = 1;
-            } else if (instrew_cfg.callconv == 3) {
-                instrew_cc = CallConv::X86_X86_RC;
-                iwcc->tc_callconv = 2;
             } else if (instrew_cfg.callconv == 5) {
                 instrew_cc = CallConv::X86_AARCH64_X;
                 iwcc->tc_callconv = 3;

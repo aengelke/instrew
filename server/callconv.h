@@ -9,7 +9,6 @@ enum class CallConv {
     CDECL,
     HHVM,
     RV64_X86_HHVM,
-    X86_X86_RC,
     X86_AARCH64_X,
 };
 
