@@ -100,7 +100,29 @@ struct SptrField {
     uint8_t size;
     uint8_t argidx;
     uint8_t retidx;
+
+    struct OffSize {
+        unsigned offset;
+        uint8_t size;
+    };
+
+    constexpr SptrField(OffSize os, uint8_t argidx, uint8_t retidx)
+            : offset(os.offset), size(os.size), argidx(argidx), retidx(retidx) {}
 };
+
+namespace SptrFields::x86_64 {
+#define RELLUME_PUBLIC_REG(name,nameu,sz,off) \
+        constexpr SptrField::OffSize nameu{off,sz};
+#include <rellume/cpustruct-x86_64.inc>
+#undef RELLUME_PUBLIC_REG
+}
+
+namespace SptrFields::rv64 {
+#define RELLUME_PUBLIC_REG(name,nameu,sz,off) \
+        constexpr SptrField::OffSize nameu{off,sz};
+#include <rellume/cpustruct-rv64.inc>
+#undef RELLUME_PUBLIC_REG
+}
 
 static constexpr unsigned SPTR_MAX_CNT = 16;
 static constexpr unsigned SPTR_MAX_OFF = 0x1a0;
@@ -328,14 +350,14 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     switch (cc) {
     case CallConv::X86_AARCH64_X: {
         static const SptrField aapcsx_fields[] = {
-            { 0x00,  8,  0,  0  },
-            { 0x08,  8,  1,  1  },
-            { 0x10,  8,  2,  2  },
-            { 0x18,  8,  3,  3  },
-            { 0x20,  8,  4,  4  },
-            { 0x28,  8,  5,  5  },
-            { 0x38,  8,  6,  6  },
-            { 0x40,  8,  7,  7  },
+            { SptrFields::x86_64::RIP,  0,  0  },
+            { SptrFields::x86_64::RAX,  1,  1  },
+            { SptrFields::x86_64::RCX,  2,  2  },
+            { SptrFields::x86_64::RDX,  3,  3  },
+            { SptrFields::x86_64::RBX,  4,  4  },
+            { SptrFields::x86_64::RSP,  5,  5  },
+            { SptrFields::x86_64::RSI,  6,  6  },
+            { SptrFields::x86_64::RDI,  7,  7  },
         };
         static const constexpr SptrFieldMap aapcsx_fieldmap = CreateSptrMap(aapcsx_fields);
         fields = aapcsx_fields;
@@ -362,19 +384,19 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     }
     case CallConv::HHVM: {
         static const SptrField hhvm_fields[] = {
-            { 0x00, 8, 0,  0  },
-            { 0x08, 8, 10, 8  },
-            { 0x10, 8, 7,  5  },
-            { 0x18, 8, 6,  4  },
-            { 0x20, 8, 2,  1  },
-            { 0x28, 8, 3,  13 },
-            { 0x30, 8, 13, 11 },
-            { 0x38, 8, 5,  3  },
-            { 0x40, 8, 4,  2  },
-            { 0x48, 8, 8,  6  },
-            { 0x50, 8, 9,  7  },
-            { 0x58, 8, 11, 9  },
-            { 0x60, 8, 12, 10 },
+            { SptrFields::x86_64::RIP, 0,  0  },
+            { SptrFields::x86_64::RAX, 10, 8  },
+            { SptrFields::x86_64::RCX, 7,  5  },
+            { SptrFields::x86_64::RDX, 6,  4  },
+            { SptrFields::x86_64::RBX, 2,  1  },
+            { SptrFields::x86_64::RSP, 3,  13 },
+            { SptrFields::x86_64::RBP, 13, 11 },
+            { SptrFields::x86_64::RSI, 5,  3  },
+            { SptrFields::x86_64::RDI, 4,  2  },
+            { SptrFields::x86_64::R8,  8,  6  },
+            { SptrFields::x86_64::R9,  9,  7  },
+            { SptrFields::x86_64::R10, 11, 9  },
+            { SptrFields::x86_64::R11, 12, 10 },
         };
         static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
         fields = hhvm_fields;
@@ -404,19 +426,19 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
     }
     case CallConv::RV64_X86_HHVM: {
         static const SptrField hhvm_fields[] = {
-            { 0x00, 8, 0,  0  }, // pc
-            { 0x98, 8, 10, 8  }, // x18
-            { 0x10, 8, 7,  5  }, // x1/ra
-            { 0x18, 8, 6,  4  }, // x2/sp; must be 0x18 due initialization
-            { 0x48, 8, 2,  1  }, // x8
-            { 0x50, 8, 3,  13 }, // x9
-            { 0x58, 8, 13, 11 }, // x10
-            { 0x60, 8, 5,  3  }, // x11
-            { 0x68, 8, 4,  2  }, // x12
-            { 0x70, 8, 8,  6  }, // x13
-            { 0x78, 8, 9,  7  }, // x14
-            { 0x80, 8, 11, 9  }, // x15
-            { 0x90, 8, 12, 10 }, // x17
+            { SptrFields::rv64::RIP, 0,  0  },
+            { SptrFields::rv64::X18, 10, 8  },
+            { SptrFields::rv64::X1,  7,  5  },
+            { SptrFields::rv64::X2,  6,  4  }, // sp; has to be at this index due to initialization
+            { SptrFields::rv64::X8,  2,  1  },
+            { SptrFields::rv64::X9,  3,  13 },
+            { SptrFields::rv64::X10, 13, 11 },
+            { SptrFields::rv64::X11, 5,  3  },
+            { SptrFields::rv64::X12, 4,  2  },
+            { SptrFields::rv64::X13, 8,  6  },
+            { SptrFields::rv64::X14, 9,  7  },
+            { SptrFields::rv64::X15, 11, 9  },
+            { SptrFields::rv64::X17, 12, 10 },
         };
         static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
         fields = hhvm_fields;
