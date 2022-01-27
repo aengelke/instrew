@@ -104,6 +104,36 @@ round(double v) {
     }
 }
 
+float
+truncf(float v) {
+    int32_t vi = F32_AS_I32(v);
+    int exp = EXP_F32(vi);
+    if (exp < 0) { // less than one
+        // < 0 -> -1, else sign(v) * 0
+        return vi < 0 ? -0.0f : 0.0f;
+    } else if (exp < 23) {
+        int32_t msk = 0x7fffff >> exp;
+        return I32_AS_F32(vi & ~msk);
+    } else { // integral, Inf, or NaN
+        return v;
+    }
+}
+
+double
+trunc(double v) {
+    int64_t vi = F64_AS_I64(v);
+    int exp = EXP_F64(vi);
+    if (exp < 0) { // less than one
+        // < 0 -> -1, else sign(v) * 0
+        return vi < 0 ? -0.0 : 0.0;
+    } else if (exp < 52) {
+        int64_t msk = 0xfffffffffffff >> exp;
+        return I64_AS_F64(vi & ~msk);
+    } else { // integral, Inf, or NaN
+        return v;
+    }
+}
+
 #ifdef TEST
 #include <inttypes.h>
 #include <stdio.h>
@@ -223,6 +253,48 @@ main(void) {
     CASE_F64(round(-63.5), -64.0);
     CASE_F64(round((int64_t) 1 << 53), (int64_t) 1 << 53);
     CASE_F64(round(((int64_t) 1 << 53) + 2), ((int64_t) 1 << 53) + 2);
+
+    CASE_F32(truncf(+0.0f), +0.0f);
+    CASE_F32(truncf(-0.0f), -0.0f);
+    CASE_F32(truncf(+0.25f), +0.0f);
+    CASE_F32(truncf(-0.25f), -0.0f);
+    CASE_F32(truncf(+0.5f), +0.0f);
+    CASE_F32(truncf(-0.5f), -0.0f);
+    CASE_F32(truncf(+1.0f), +1.0f);
+    CASE_F32(truncf(-1.0f), -1.0f);
+    CASE_F32(truncf(+1.125f), +1.0f);
+    CASE_F32(truncf(-1.125f), -1.0f);
+    CASE_F32(truncf(+1.5f), +1.0f);
+    CASE_F32(truncf(-1.5f), -1.0f);
+    CASE_F32(truncf(+1.625f), +1.0f);
+    CASE_F32(truncf(-1.625f), -1.0f);
+    CASE_F32(truncf(+63.0f), +63.0f);
+    CASE_F32(truncf(-63.0f), -63.0f);
+    CASE_F32(truncf(+63.5f), +63.0f);
+    CASE_F32(truncf(-63.5f), -63.0f);
+    CASE_F32(truncf((int32_t) 1 << 24), (int32_t) 1 << 24);
+    CASE_F32(truncf(((int32_t) 1 << 24) + 2), ((int32_t) 1 << 24) + 2);
+
+    CASE_F64(trunc(+0.0), +0.0);
+    CASE_F64(trunc(-0.0), -0.0);
+    CASE_F64(trunc(+0.25), +0.0);
+    CASE_F64(trunc(-0.25), -0.0);
+    CASE_F64(trunc(+0.5), +0.0);
+    CASE_F64(trunc(-0.5), -0.0);
+    CASE_F64(trunc(+1.0), +1.0);
+    CASE_F64(trunc(-1.0), -1.0);
+    CASE_F64(trunc(+1.125), +1.0);
+    CASE_F64(trunc(-1.125), -1.0);
+    CASE_F64(trunc(+1.5), +1.0);
+    CASE_F64(trunc(-1.5), -1.0);
+    CASE_F64(trunc(+1.625), +1.0);
+    CASE_F64(trunc(-1.625), -1.0);
+    CASE_F64(trunc(+63.0), +63.0);
+    CASE_F64(trunc(-63.0), -63.0);
+    CASE_F64(trunc(+63.5), +63.0);
+    CASE_F64(trunc(-63.5), -63.0);
+    CASE_F64(trunc((int64_t) 1 << 53), (int64_t) 1 << 53);
+    CASE_F64(trunc(((int64_t) 1 << 53) + 2), ((int64_t) 1 << 53) + 2);
 
     printf("1..%u\n", count);
     return failed != 0;

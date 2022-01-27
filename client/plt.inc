@@ -11,6 +11,8 @@ PLT_ENTRY("ceilf", ceilf) // math.c
 PLT_ENTRY("ceil", ceil) // math.c
 PLT_ENTRY("roundf", roundf) // math.c
 PLT_ENTRY("round", round) // math.c
+PLT_ENTRY("truncf", truncf) // math.c
+PLT_ENTRY("trunc", trunc) // math.c
 PLT_ENTRY("instrew_tail_cdecl", dispatch_cdecl) // dispatch.c
 PLT_ENTRY("instrew_call_cdecl", dispatch_cdecl) // dispatch.c
 #if defined(__x86_64__)
