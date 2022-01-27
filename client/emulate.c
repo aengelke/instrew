@@ -565,14 +565,10 @@ end:
         signal_handle(cpu_state);
 }
 
-void emulate_rv64_syscall(uint64_t* cpu_regs);
-
-void
-emulate_rv64_syscall(uint64_t* cpu_regs) {
-    struct CpuState* cpu_state = CPU_STATE_FROM_REGS(cpu_regs);
-    uint64_t arg0 = cpu_regs[11], arg1 = cpu_regs[12], arg2 = cpu_regs[13],
-             arg3 = cpu_regs[14], arg4 = cpu_regs[15], arg5 = cpu_regs[16];
-    uint64_t nr = cpu_regs[18]; // a7/x17
+static bool
+emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
+                        uint64_t arg0, uint64_t arg1, uint64_t arg2,
+                        uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     ssize_t res = -ENOSYS;
 
     switch (nr) {
@@ -739,7 +735,7 @@ emulate_rv64_syscall(uint64_t* cpu_regs) {
         break;
     case 139: // rt_sigreturn
         signal_sigreturn(cpu_state);
-        return; // Note -- we don't have a result here.
+        return false; // Note -- we don't have a result here.
     case 136: // rt_sigpending
         if (arg1 != sizeof(sigset_t))
             res = -EINVAL;
@@ -759,8 +755,21 @@ emulate_rv64_syscall(uint64_t* cpu_regs) {
         break;
     }
 
-    cpu_regs[11] = res;
+    *resp = res;
+    return true;
+}
 
-    if (cpu_state->sigpending)
+void emulate_rv64_syscall(uint64_t* cpu_regs);
+
+void
+emulate_rv64_syscall(uint64_t* cpu_regs) {
+    struct CpuState* cpu_state = CPU_STATE_FROM_REGS(cpu_regs);
+    uint64_t a0 = cpu_regs[11], a1 = cpu_regs[12], a2 = cpu_regs[13],
+             a3 = cpu_regs[14], a4 = cpu_regs[15], a5 = cpu_regs[16];
+    uint64_t nr = cpu_regs[18]; // a7/x17
+    bool normal_cont = emulate_syscall_generic(cpu_state, &cpu_regs[11], nr,
+                                               a0, a1, a2, a3, a4, a5);
+    // TODO: support non-normal continuations (i.e., sigreturn)
+    if (normal_cont && cpu_state->sigpending)
         signal_handle(cpu_state);
 }
