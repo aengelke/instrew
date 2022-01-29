@@ -300,7 +300,7 @@ public:
     }
     ~IWState() {
         if (instrew_cfg.profile) {
-            std::cerr << "Server profile: "
+            std::cerr << "Server profile: " << std::dec
                       << std::chrono::duration_cast<std::chrono::milliseconds>(dur_predecode).count()
                       << "ms predecode; "
                       << std::chrono::duration_cast<std::chrono::milliseconds>(dur_lifting).count()
@@ -413,7 +413,15 @@ private:
                     i += 1;
             }
         }
-        llvm::Function* fn = llvm::unwrap<llvm::Function>(ll_func_lift(rlfn));
+        LLVMValueRef fn_wrapped = ll_func_lift(rlfn);
+        if (!fn_wrapped) {
+            std::cerr << "error: lift failed 0x" << std::hex << addr
+                      << " #insts: " << std::dec << insts.size() << std::endl;
+            ll_func_dispose(rlfn);
+            return nullptr;
+        }
+
+        llvm::Function* fn = llvm::unwrap<llvm::Function>(fn_wrapped);
         ll_func_dispose(rlfn);
 
         fn->setName("S0");
