@@ -24,6 +24,8 @@ CallConv GetFastCC(int host_arch, int guest_arch) {
         return CallConv::HHVM;
     if (host_arch == EM_X86_64 && guest_arch == EM_RISCV)
         return CallConv::RV64_X86_HHVM;
+    if (host_arch == EM_X86_64 && guest_arch == EM_AARCH64)
+        return CallConv::AARCH64_X86_HHVM;
     if (host_arch == EM_AARCH64 && guest_arch == EM_X86_64)
         return CallConv::X86_AARCH64_X;
     return CallConv::CDECL;
@@ -34,6 +36,7 @@ int GetCallConvClientNumber(CallConv cc) {
     case CallConv::CDECL: return 0;
     case CallConv::HHVM: return 1;
     case CallConv::RV64_X86_HHVM: return 1;
+    case CallConv::AARCH64_X86_HHVM: return 1;
     case CallConv::X86_AARCH64_X: return 3;
     default: return 0;
     }
@@ -121,6 +124,13 @@ namespace SptrFields::rv64 {
 #define RELLUME_PUBLIC_REG(name,nameu,sz,off) \
         constexpr SptrField::OffSize nameu{off,sz};
 #include <rellume/cpustruct-rv64.inc>
+#undef RELLUME_PUBLIC_REG
+}
+
+namespace SptrFields::aarch64 {
+#define RELLUME_PUBLIC_REG(name,nameu,sz,off) \
+        constexpr SptrField::OffSize nameu{off,sz};
+#include <rellume/cpustruct-aarch64.inc>
 #undef RELLUME_PUBLIC_REG
 }
 
@@ -439,6 +449,27 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
             { SptrFields::rv64::X14, 9,  7  },
             { SptrFields::rv64::X15, 11, 9  },
             { SptrFields::rv64::X17, 12, 10 },
+        };
+        static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
+        fields = hhvm_fields;
+        fieldmap = &hhvm_fieldmap;
+        goto callconv_hhvm_common;
+    }
+    case CallConv::AARCH64_X86_HHVM: {
+        static const SptrField hhvm_fields[] = {
+            { SptrFields::aarch64::PC,  0,  0  },
+            { SptrFields::aarch64::X0,  10, 8  },
+            { SptrFields::aarch64::X1,  7,  5  },
+            { SptrFields::aarch64::X2,  6,  4  },
+            { SptrFields::aarch64::X3,  2,  1  },
+            { SptrFields::aarch64::X4,  3,  13 },
+            { SptrFields::aarch64::X5,  13, 11 },
+            { SptrFields::aarch64::X6,  5,  3  },
+            { SptrFields::aarch64::X7,  4,  2  },
+            { SptrFields::aarch64::X8,  8,  6  },
+            { SptrFields::aarch64::X9,  9,  7  },
+            { SptrFields::aarch64::X30, 11, 9  },
+            { SptrFields::aarch64::X11, 12, 10 }, // TODO: map SP
         };
         static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
         fields = hhvm_fields;
