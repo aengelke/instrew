@@ -134,6 +134,16 @@ trunc(double v) {
     }
 }
 
+float
+fmaf(float x, float y, float z) {
+    return (x * y) + z; // TODO: actually perform fused multiply-add
+}
+
+double
+fma(double x, double y, double z) {
+    return (x * y) + z; // TODO: actually perform fused multiply-add
+}
+
 #ifdef TEST
 #include <inttypes.h>
 #include <stdio.h>

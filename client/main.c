@@ -232,6 +232,8 @@ int main(int argc, char** argv) {
         cpu_regs[5] = (uintptr_t) stack_top;
     } else if (state.tsc.tsc_guest_arch == EM_RISCV) {
         cpu_regs[3] = (uintptr_t) stack_top;
+    } else if (state.tsc.tsc_guest_arch == EM_AARCH64) {
+        cpu_regs[33] = (uintptr_t) stack_top;
     } else {
         // well... -.-
         puts("error: unsupported architecture");

@@ -216,6 +216,13 @@ public:
             auto syscall_fn = CreateFunc(ctx, "syscall_rv64");
             helper_fns.push_back(syscall_fn);
             ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
+        } else if (iwsc->tsc_guest_arch == EM_AARCH64) {
+            ll_config_set_architecture(rlcfg, "aarch64");
+            decode_fn = DecodeAArch64;
+
+            auto syscall_fn = CreateFunc(ctx, "syscall_aarch64");
+            helper_fns.push_back(syscall_fn);
+            ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
         } else {
             std::cerr << "error: unsupported architecture" << std::endl;
             abort();

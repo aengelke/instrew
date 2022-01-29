@@ -3,6 +3,7 @@
 
 #include <fadec.h>
 #include <frvdec.h>
+#include <farmdec.h>
 
 DecodeResult DecodeX86_64(uintptr_t addr, size_t bufsz, const uint8_t* buf) {
     DecodeResult res{DecodeResult::FAILED, 0, 0};
@@ -93,6 +94,57 @@ DecodeResult DecodeRV64(uintptr_t addr, size_t bufsz, const uint8_t* buf) {
         res.result = frv.rd ? DecodeResult::CALL : DecodeResult::UNKNOWN_TGT;
         break;
     case FRV_ECALL:
+        res.result = DecodeResult::UNKNOWN_TGT;
+        break;
+    default:
+        res.result = DecodeResult::NORMAL;
+        break;
+    }
+    return res;
+}
+
+DecodeResult DecodeAArch64(uintptr_t addr, size_t bufsz, const uint8_t* buf) {
+    DecodeResult res{DecodeResult::FAILED, 0, 0};
+    farmdec::Inst fad;
+    if (bufsz < 4)
+        return res;
+    uint32_t binst = buf[0] | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24);
+    fad_decode(&binst, 1, &fad);
+    if (fad.op == farmdec::A64_ERROR || fad.op == farmdec::A64_UNKNOWN)
+        return res;
+
+    res.size = 4;
+
+    switch (fad.op) {
+    case farmdec::A64_BCOND:
+    case farmdec::A64_CBZ:
+    case farmdec::A64_CBNZ:
+        res.result = DecodeResult::COND_BRANCH;
+        res.branch_target = addr + fad.offset;
+        break;
+    case farmdec::A64_TBZ:
+    case farmdec::A64_TBNZ:
+        res.result = DecodeResult::COND_BRANCH;
+        res.branch_target = addr + fad.tbz.offset;
+        break;
+    case farmdec::A64_B:
+        res.result = DecodeResult::BRANCH;
+        res.branch_target = addr + fad.offset;
+        break;
+    case farmdec::A64_BL:
+    case farmdec::A64_BLR:
+        res.result = DecodeResult::CALL;
+        break;
+    case farmdec::A64_BR:
+    case farmdec::A64_RET:
+    case farmdec::A64_SVC:
+    case farmdec::A64_HVC:
+    case farmdec::A64_SMC:
+    case farmdec::A64_BRK:
+    case farmdec::A64_HLT:
+    case farmdec::A64_DCPS1:
+    case farmdec::A64_DCPS2:
+    case farmdec::A64_DCPS3:
         res.result = DecodeResult::UNKNOWN_TGT;
         break;
     default:

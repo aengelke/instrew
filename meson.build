@@ -49,6 +49,8 @@ fadec = dependency('fadec', static: true,
                    default_options: ['archmode=only64'])
 frvdec = dependency('frvdec', static: true,
                     fallback: ['frvdec', 'frvdec'])
+farmdec = dependency('farmdec', static: true,
+                     fallback: ['farmdec', 'farmdec'])
 
 rellume = subproject('rellume')
 librellume = rellume.get_variable('librellume')

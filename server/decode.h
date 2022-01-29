@@ -20,5 +20,6 @@ struct DecodeResult {
 
 DecodeResult DecodeX86_64(uintptr_t addr, size_t bufsz, const uint8_t* buf);
 DecodeResult DecodeRV64(uintptr_t addr, size_t bufsz, const uint8_t* buf);
+DecodeResult DecodeAArch64(uintptr_t addr, size_t bufsz, const uint8_t* buf);
 
 #endif

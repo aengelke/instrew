@@ -15,6 +15,6 @@ configure_file(configuration: config_data, output: 'instrew-server-config.h')
 
 executable('instrew-server', sources,
            include_directories: include_directories('.', '../shared'),
-           dependencies: [librellume, fadec, frvdec, libllvm, libcrypto, instrew_api],
+           dependencies: [librellume, fadec, frvdec, farmdec, libllvm, libcrypto, instrew_api],
            link_args: ['-ldl'],
            install: true)

@@ -7,3 +7,6 @@
 [submodule "subprojects/frvdec"]
 	path = subprojects/frvdec
 	url = https://git.sr.ht/~aengelke/frvdec
+[submodule "subprojects/farmdec"]
+	path = subprojects/farmdec
+	url = https://github.com/okitec/farmdec.git

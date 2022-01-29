@@ -773,3 +773,40 @@ emulate_rv64_syscall(uint64_t* cpu_regs) {
     if (normal_cont && cpu_state->sigpending)
         signal_handle(cpu_state);
 }
+
+void emulate_aarch64_syscall(uint64_t* cpu_regs);
+
+void
+emulate_aarch64_syscall(uint64_t* cpu_regs) {
+    struct CpuState* cpu_state = CPU_STATE_FROM_REGS(cpu_regs);
+    uint64_t a0 = cpu_regs[2], a1 = cpu_regs[3], a2 = cpu_regs[4],
+             a3 = cpu_regs[5], a4 = cpu_regs[6], a5 = cpu_regs[7];
+    uint64_t nr = cpu_regs[10]; // x8
+    bool normal_cont = true;
+
+    switch (nr) {
+    default:
+    passthrough:
+        normal_cont = emulate_syscall_generic(cpu_state, &cpu_regs[2], nr,
+                                              a0, a1, a2, a3, a4, a5);
+        break;
+
+    case 56: {// openat on AArch64 has some swapped flags
+        // See Linux arch/arm64/include/uapi/asm/fcntl.h
+        uint64_t new_a2 = a2 & ~00740000;
+        if (a2 & 00040000) // O_DIRECTORY
+            new_a2 |= 00200000;
+        if (a2 & 00100000) // O_NOFOLLOW
+            new_a2 |= 00400000;
+        if (a2 & 00200000) // O_DIRECT
+            new_a2 |= 00040000;
+        if (a2 & 00400000) // O_LARGEFILE
+            new_a2 |= 00100000;
+        a2 = new_a2;
+        goto passthrough;
+    }
+    }
+    // TODO: support non-normal continuations (i.e., sigreturn)
+    if (normal_cont && cpu_state->sigpending)
+        signal_handle(cpu_state);
+}
