@@ -301,6 +301,8 @@ struct CCState {
             llvm::FunctionType* tgt_ty = tgt->getFunctionType();
             llvm::SmallVector<llvm::Value*, SPTR_MAX_CNT+1> params;
             params.resize(tgt_ty->getNumParams());
+            for (unsigned i = 0; i < params.size(); i++)
+                params[i] = llvm::UndefValue::get(tgt_ty->getParamType(i));
             params[sptr->getArgNo()] = sptr;
             for (unsigned i = 0; i < fields.size(); i++)
                 params[fields[i].argidx] = vals[i];
@@ -324,8 +326,45 @@ struct CCState {
                 unsigned idx_u = static_cast<unsigned>(sptr_ret_idx);
                 ret_val = irb.CreateInsertValue(ret_val, sptr, {idx_u});
             }
-            for (unsigned i = 0; i < fields.size(); i++)
+            uint32_t rv_set = 0;
+            for (unsigned i = 0; i < fields.size(); i++) {
                 ret_val = irb.CreateInsertValue(ret_val, vals[i], {fields[i].retidx});
+                rv_set |= 1 << fields[i].retidx;
+            }
+            // This is an *EXTREMELY UGLY HACK* to work around some bugs in LLVM
+            // when RBP is a parameter register. So first of all, we lowered the
+            // stack alignment to 8, because HHVMCC functions cannot be called
+            // due to the skewed stack alignment (Bug 1). Some code needs stack
+            // stack realignments. The HHVMCC uses RBP for parameters/return
+            // values, but stack realignment routines use RBP to hold the old
+            // stack pointer value unconditionally. This leads to broken code:
+            //
+            //     push rbp; mov rbp, rsp; and rsp, -16; ...
+            //     (parameter is now clobbered/gone -- whoops!)
+            //     (rbp is modified, trashing the old RSP -- whoops!)
+            //     ...; mov rsp, rbp; pop rbp; ret
+            // (Bug 2)
+            //
+            // Disabling that with "no-realign-stack" doesn't work either,
+            // because lowering some instructions (e.g., extractelement with a
+            // variable index) simply assumes a suitably aligned stack (Bug 3).
+            //
+            // Now the options to work around this situation are:
+            // - Inlineasm for calls containing "sub rsp, 8; call; add rsp 8"
+            //   (not good for performance)
+            // - Not generating code that needs stack alignment (impossible)
+            // - Implementing proper support for custom CCs upstream (hard work)
+            // - Fixing any of the LLVM bugs mentioned above.
+            //   (consequence: Instrew would need a patched LLVM to work)
+            // - Always returning the original RBP to emulate a callee-saved reg
+            //   (this is what we do here)
+            //
+            // For now, we do this only for AArch64 guests, the problem wasn't
+            // encountered with other guest architectures.
+            //
+            // RBP is parameter (zero-indexed) 2 and return index 1.
+            if (nfn->getCallingConv() == llvm::CallingConv::HHVM && !(rv_set & 2))
+                ret_val = irb.CreateInsertValue(ret_val, nfn->arg_begin() + 2, {1});
             irb.CreateRet(ret_val);
         }
 
@@ -398,6 +437,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
             { SptrFields::x86_64::RAX, 10, 8  },
             { SptrFields::x86_64::RCX, 7,  5  },
             { SptrFields::x86_64::RDX, 6,  4  },
+            // TBD: determine whether we can safely map to RBP
             { SptrFields::x86_64::RBX, 2,  1  },
             { SptrFields::x86_64::RSP, 3,  13 },
             { SptrFields::x86_64::RBP, 13, 11 },
@@ -440,6 +480,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
             { SptrFields::rv64::X18, 10, 8  },
             { SptrFields::rv64::X1,  7,  5  },
             { SptrFields::rv64::X2,  6,  4  }, // sp; has to be at this index due to initialization
+            // TBD: determine whether we can safely map to RBP
             { SptrFields::rv64::X8,  2,  1  },
             { SptrFields::rv64::X9,  3,  13 },
             { SptrFields::rv64::X10, 13, 11 },
@@ -461,15 +502,15 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
             { SptrFields::aarch64::X0,  10, 8  },
             { SptrFields::aarch64::X1,  7,  5  },
             { SptrFields::aarch64::X2,  6,  4  },
-            { SptrFields::aarch64::X3,  2,  1  },
-            { SptrFields::aarch64::X4,  3,  13 },
-            { SptrFields::aarch64::X5,  13, 11 },
-            { SptrFields::aarch64::X6,  5,  3  },
-            { SptrFields::aarch64::X7,  4,  2  },
-            { SptrFields::aarch64::X8,  8,  6  },
-            { SptrFields::aarch64::X9,  9,  7  },
+            // Can't map to RBP (2,1), see above for a detailed discussion
+            { SptrFields::aarch64::X3,  3,  13 },
+            { SptrFields::aarch64::X4,  13, 11 },
+            { SptrFields::aarch64::X5,  5,  3  },
+            { SptrFields::aarch64::X6,  4,  2  },
+            { SptrFields::aarch64::X7,  8,  6  },
+            { SptrFields::aarch64::X8,  9,  7  },
             { SptrFields::aarch64::X30, 11, 9  },
-            { SptrFields::aarch64::X11, 12, 10 }, // TODO: map SP
+            { SptrFields::aarch64::X9,  12, 10 }, // TODO: map SP
         };
         static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
         fields = hhvm_fields;
