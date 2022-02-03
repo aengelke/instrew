@@ -605,6 +605,7 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
         }
     case 29: nr = __NR_ioctl; goto native; // TODO: catch dangerous commands
     case 35: nr = __NR_unlinkat; goto native;
+    case 38: nr = __NR_renameat; goto native;
     case 46: nr = __NR_ftruncate; goto native;
     case 48: nr = __NR_faccessat; goto native;
     case 49: nr = __NR_chdir; goto native;
