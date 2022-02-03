@@ -28,6 +28,8 @@ CallConv GetFastCC(int host_arch, int guest_arch) {
         return CallConv::AARCH64_X86_HHVM;
     if (host_arch == EM_AARCH64 && guest_arch == EM_X86_64)
         return CallConv::X86_AARCH64_X;
+    if (host_arch == EM_AARCH64 && guest_arch == EM_AARCH64)
+        return CallConv::AARCH64_AARCH64_X;
     return CallConv::CDECL;
 }
 
@@ -38,6 +40,7 @@ int GetCallConvClientNumber(CallConv cc) {
     case CallConv::RV64_X86_HHVM: return 1;
     case CallConv::AARCH64_X86_HHVM: return 1;
     case CallConv::X86_AARCH64_X: return 3;
+    case CallConv::AARCH64_AARCH64_X: return 3;
     default: return 0;
     }
 }
@@ -411,6 +414,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         static const constexpr SptrFieldMap aapcsx_fieldmap = CreateSptrMap(aapcsx_fields);
         fields = aapcsx_fields;
         fieldmap = &aapcsx_fieldmap;
+    callconv_aapcsx_common:
         ret_ty = llvm::StructType::get(i64, i64, i64, i64, i64, i64, i64, i64);
         fn_ty = llvm::FunctionType::get(ret_ty,
                 {i64, i64, i64, i64, i64, i64, i64, i64, sptr_ty}, false);
@@ -430,6 +434,22 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
             call_fn = tail_fn;
         }
         break;
+    }
+    case CallConv::AARCH64_AARCH64_X: {
+        static const SptrField aapcsx_fields[] = {
+            { SptrFields::aarch64::PC,  0,  0  },
+            { SptrFields::aarch64::X0,  1,  1  },
+            { SptrFields::aarch64::X1,  2,  2  },
+            { SptrFields::aarch64::X2,  3,  3  },
+            { SptrFields::aarch64::X3,  4,  4  },
+            { SptrFields::aarch64::X4,  5,  5  },
+            { SptrFields::aarch64::X30, 6,  6  },
+            { SptrFields::aarch64::X6,  7,  7  }, // TODO: map SP
+        };
+        static const constexpr SptrFieldMap aapcsx_fieldmap = CreateSptrMap(aapcsx_fields);
+        fields = aapcsx_fields;
+        fieldmap = &aapcsx_fieldmap;
+        goto callconv_aapcsx_common;
     }
     case CallConv::HHVM: {
         static const SptrField hhvm_fields[] = {
