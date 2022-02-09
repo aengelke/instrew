@@ -296,6 +296,7 @@ public:
         SHA1_Update(&config_sha, &instrew_cfg.safecallret, sizeof instrew_cfg.safecallret);
         SHA1_Update(&config_sha, &instrew_cfg.fullfacets, sizeof instrew_cfg.fullfacets);
         SHA1_Update(&config_sha, &instrew_cfg.callret, sizeof instrew_cfg.callret);
+        SHA1_Update(&config_sha, &instrew_cfg.pic, sizeof instrew_cfg.pic);
         SHA1_Update(&config_sha, &iwsc->tsc_guest_arch, sizeof iwsc->tsc_guest_arch);
         SHA1_Update(&config_sha, &iwsc->tsc_host_arch, sizeof iwsc->tsc_host_arch);
         SHA1_Update(&config_sha, &iwsc->tsc_host_cpu_features, sizeof iwsc->tsc_host_cpu_features);
