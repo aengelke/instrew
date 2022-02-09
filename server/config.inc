@@ -11,7 +11,7 @@ INSTREW_OPT(bool, fullfacets, false)
 INSTREW_OPT(bool, callret, false)
 INSTREW_OPT(bool, pic, false)
 INSTREW_OPT(bool, cache, false)
-INSTREW_OPT(bool, cachereadonly, false)
+INSTREW_OPT(std::string, cachemode, "rw") // rw=read-write, r=read, w=write
 INSTREW_OPT(bool, cacheverbose, false)
 INSTREW_OPT(std::string, cachedir, "")
 

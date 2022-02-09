@@ -47,7 +47,8 @@ static ssize_t write_full(int fd, const char* buf, size_t nbytes) {
 } // end namespace
 
 Cache::Cache(const InstrewConfig& instrew_cfg) {
-    active = false; // default to no cache -- it's not critical.
+    allow_read = false;
+    allow_write = false; // default to no cache -- it's not critical.
     if (!instrew_cfg.cache)
         return;
     if (geteuid() != getuid())
@@ -65,8 +66,17 @@ Cache::Cache(const InstrewConfig& instrew_cfg) {
     // TODO: fix cache dir permissions
     if (std::filesystem::create_directories(path, ec) || ec)
         return;
-    active = true;
-    readonly = instrew_cfg.cachereadonly;
+    if (instrew_cfg.cachemode == "rw") {
+        allow_read = true;
+        allow_write = true;
+    } else if (instrew_cfg.cachemode == "r") {
+        allow_read = true;
+    } else if (instrew_cfg.cachemode == "w") {
+        allow_write = true;
+    } else {
+        // Well... keep allow_read and allow_write as false.
+        std::cerr << "invalid cache mode, disabling cache" << std::endl;
+    }
     verbose = instrew_cfg.cacheverbose;
 }
 
@@ -80,7 +90,7 @@ std::filesystem::path Cache::FileName(const uint8_t* hash, std::string suffix) {
 }
 
 std::pair<int,size_t> Cache::Get(const uint8_t* hash) {
-    if (!active)
+    if (!allow_read)
         return std::make_pair(-1, 0);
 
     std::filesystem::path cachefile = FileName(hash);
@@ -98,7 +108,7 @@ std::pair<int,size_t> Cache::Get(const uint8_t* hash) {
 }
 
 void Cache::Put(const uint8_t* hash, size_t bufsz, const char* buf) {
-    if (!active || readonly)
+    if (!allow_write)
         return;
 
     std::filesystem::path cachefile = FileName(hash, ".tmp");

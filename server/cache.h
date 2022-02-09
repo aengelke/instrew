@@ -14,7 +14,7 @@ class Cache {
 public:
     static constexpr size_t HASH_SIZE = 20;
 
-    Cache() : active(false) {};
+    Cache() : allow_read(false), allow_write(false) {};
     Cache(const InstrewConfig& instrew_cfg);
     ~Cache();
 
@@ -24,8 +24,8 @@ public:
 private:
     std::filesystem::path FileName(const uint8_t* hash, std::string suffix = "");
 
-    bool active;
-    bool readonly;
+    bool allow_read;
+    bool allow_write;
     bool verbose;
     std::filesystem::path path;
 };
