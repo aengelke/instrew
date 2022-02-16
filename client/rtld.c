@@ -536,11 +536,12 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
     if ((retval = rtld_elf_init(&re, obj_base, obj_size, skew, r)) < 0)
         goto out;
 
-    uintptr_t entry = 0;
-
     int i, j;
     Elf64_Shdr* elf_shnt;
-    // First pass to check flags and allocate memory, if needed.
+
+    // First, check flags and determine total allocation size and alignment
+    size_t totsz = 0;
+    size_t totalign = 1;
     for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
         // We don't support more flags
         if (elf_shnt->sh_flags & ~(SHF_ALLOC|SHF_EXECINSTR|SHF_MERGE|SHF_STRINGS)) {
@@ -548,12 +549,21 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
             return -EINVAL;
         }
         if (elf_shnt->sh_flags & SHF_ALLOC) {
-            void* addr = mem_alloc_code(elf_shnt->sh_size, elf_shnt->sh_addralign);
-            if (BAD_ADDR(addr))
-                return (int) (uintptr_t) addr;
-            elf_shnt->sh_addr = (Elf64_Xword) addr;
+            totsz = ALIGN_UP(totsz, elf_shnt->sh_addralign);
+            elf_shnt->sh_addr = totsz; // keep offset into allocation
+            totsz += elf_shnt->sh_size;
+            if (totalign < elf_shnt->sh_addralign)
+                totalign = elf_shnt->sh_addralign;
         }
     }
+
+    char* base = mem_alloc_code(totsz, totalign);
+    if (BAD_ADDR(base))
+        return (int) (uintptr_t) base;
+
+    for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++)
+        if (elf_shnt->sh_flags & SHF_ALLOC)
+            elf_shnt->sh_addr += (uintptr_t) base;
 
     // Second pass to resolve relocations, now that all sections are allocated.
     for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
@@ -577,7 +587,7 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
                     continue;
                 if (elf_sym->st_shndx >= re.re_ehdr->e_shnum)
                     return -EINVAL;
-                entry = re.re_shdr[elf_sym->st_shndx].sh_addr + elf_sym->st_value;
+                uintptr_t entry = re.re_shdr[elf_sym->st_shndx].sh_addr + elf_sym->st_value;
 
                 // Determine address from name, encoded in Z<octaladdr>_ignored
                 const char* name = NULL;
