@@ -522,14 +522,6 @@ static int rtld_set(Rtld* r, uintptr_t addr, void* entry, void* obj_base,
 }
 
 int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
-    // "Link" (fix) given ELF file.
-    //  - check that all sections are non-writable
-    //  - check that there is no GOT/PLT (we would have to really link stuff
-    //    if that happens, but we are lazy)
-    //  - apply relocations
-    //  - find a single, visible and linkable function
-    //  - TBD: check that sections don't overlap (?)
-
     int retval;
 
     RtldElf re;
@@ -567,78 +559,74 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
 
     // Second pass to resolve relocations, now that all sections are allocated.
     for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
-        retval = -EINVAL;
-        switch (elf_shnt->sh_type) {
-        case SHT_SYMTAB:
-            // Requires handling: extract symbol
-            // look for a single entry "FUNC GLOBAL DEFAULT"
-            if (elf_shnt->sh_entsize != sizeof(Elf64_Sym))
-                goto out;
-            Elf64_Sym* elf_sym = (Elf64_Sym*) ((uint8_t*) obj_base + elf_shnt->sh_offset);
-            Elf64_Sym* elf_sym_end = elf_sym + elf_shnt->sh_size / sizeof(Elf64_Sym);
-            for (j = 0; elf_sym != elf_sym_end; j++, elf_sym++) {
-                if (ELF64_ST_BIND(elf_sym->st_info) != STB_GLOBAL)
-                    continue;
-                if (ELF64_ST_TYPE(elf_sym->st_info) != STT_FUNC)
-                    continue;
-                if (ELF64_ST_VISIBILITY(elf_sym->st_other) != STV_DEFAULT)
-                    continue;
-                if (elf_sym->st_shndx == SHN_UNDEF)
-                    continue;
-                if (elf_sym->st_shndx >= re.re_ehdr->e_shnum)
-                    return -EINVAL;
-                uintptr_t entry = re.re_shdr[elf_sym->st_shndx].sh_addr + elf_sym->st_value;
-
-                // Determine address from name, encoded in Z<octaladdr>_ignored
-                const char* name = NULL;
-                rtld_elf_resolve_str(&re, elf_shnt->sh_link, elf_sym->st_name, &name);
-                if (!name)
-                    goto out;
-                uintptr_t addr = 0;
-                retval = rtld_elf_decode_name(&re, name, &addr);
-                if (retval < 0 || addr == 0) {
-                    dprintf(2, "invalid function name %s\n", name);
-                    goto out;
-                }
-                retval = rtld_set(r, addr, (void*) entry, obj_base, obj_size);
-                if (retval < 0)
-                    goto out;
-
-                if (UNLIKELY(r->perfmap_fd >= 0)) {
-                    dprintf(r->perfmap_fd, "%lx %lx %lx_%s\n",
-                            entry, elf_sym->st_size, addr, name);
-                }
-            }
-            break;
-        case SHT_RELA:
-            if (rtld_elf_process_rela(&re, i) < 0)
-                goto out;
-            break;
-        case SHT_NULL:
-        case SHT_NOTE:
-        case SHT_PROGBITS:
-        case SHT_STRTAB:
-        case SHT_X86_64_UNWIND:
-            // don't care too much
-            break;
-        case SHT_NOBITS: // .bss not supported
-        default: // unhandled section header
+        if (elf_shnt->sh_type != SHT_RELA)
+            continue;
+        retval = rtld_elf_process_rela(&re, i);
+        if (retval < 0)
             goto out;
-        }
     }
 
     // Third pass to actually copy code into target allocation
     for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
-        if (elf_shnt->sh_flags & SHF_ALLOC) {
-            uint8_t* src = re.base + elf_shnt->sh_offset;
-            void* dst = (void*) elf_shnt->sh_addr;
-            retval = mem_write_code(dst, src, elf_shnt->sh_size);
+        if (elf_shnt->sh_type != SHT_PROGBITS)
+            continue;
+        uint8_t* src = re.base + elf_shnt->sh_offset;
+        void* dst = (void*) elf_shnt->sh_addr;
+        if ((retval = mem_write_code(dst, src, elf_shnt->sh_size)) < 0)
+            goto out;
+    }
+
+    // Last pass to store final addresses in the hash table. This is done after
+    // the code is put into its final place to avoid storing invalid addresses.
+    for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
+        if (elf_shnt->sh_type != SHT_SYMTAB)
+            continue;
+
+        retval = -EINVAL;
+        if (elf_shnt->sh_entsize != sizeof(Elf64_Sym))
+            goto out;
+        Elf64_Sym* elf_sym = (Elf64_Sym*) ((uint8_t*) obj_base + elf_shnt->sh_offset);
+        Elf64_Sym* elf_sym_end = elf_sym + elf_shnt->sh_size / sizeof(Elf64_Sym);
+        for (j = 0; elf_sym != elf_sym_end; j++, elf_sym++) {
+            if (ELF64_ST_BIND(elf_sym->st_info) != STB_GLOBAL)
+                continue;
+            if (ELF64_ST_TYPE(elf_sym->st_info) != STT_FUNC)
+                continue;
+            if (ELF64_ST_VISIBILITY(elf_sym->st_other) != STV_DEFAULT)
+                continue;
+            if (elf_sym->st_shndx == SHN_UNDEF)
+                continue;
+            retval = -EINVAL;
+            if (elf_sym->st_shndx >= re.re_ehdr->e_shnum)
+                goto out;
+            uintptr_t entry = re.re_shdr[elf_sym->st_shndx].sh_addr + elf_sym->st_value;
+
+            // Determine address from name, encoded in Z<octaladdr>_ignored
+            const char* name = NULL;
+            rtld_elf_resolve_str(&re, elf_shnt->sh_link, elf_sym->st_name, &name);
+            if (!name)
+                goto out;
+            uintptr_t addr = 0;
+            retval = rtld_elf_decode_name(&re, name, &addr);
+            if (retval < 0 || addr == 0) {
+                dprintf(2, "invalid function name %s\n", name);
+                goto out;
+            }
+            retval = rtld_set(r, addr, (void*) entry, obj_base, obj_size);
             if (retval < 0)
                 goto out;
+
+            if (UNLIKELY(r->perfmap_fd >= 0)) {
+                dprintf(r->perfmap_fd, "%lx %lx %lx_%s\n",
+                        entry, elf_sym->st_size, addr, name);
+            }
         }
     }
 
+    return 0;
+
 out:
+    // TODO: deallocate memory on failure
     return retval;
 }
 
