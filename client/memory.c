@@ -36,7 +36,7 @@ arena_init(Arena* arena, void* base, size_t size) {
 }
 
 static void*
-arena_alloc(Arena* arena, size_t size, size_t alignment) {
+arena_alloc(Arena* arena, size_t size, size_t alignment, bool exec) {
     if (alignment < 0x40)
         alignment = 0x40;
     if (alignment & (alignment - 1))
@@ -49,7 +49,8 @@ arena_alloc(Arena* arena, size_t size, size_t alignment) {
     size_t newpgsz = ALIGN_UP(size - (arena->brkp - brk_al), getpagesize());
     if (arena->brk + newpgsz > arena->end)
         return (void*) (uintptr_t) -ENOMEM;
-    int ret = mprotect(arena->brkp, newpgsz, PROT_READ|PROT_WRITE);
+    int prot = PROT_READ|PROT_WRITE | (exec ? PROT_EXEC : 0);
+    int ret = mprotect(arena->brkp, newpgsz, prot);
     if (ret < 0)
         return (void*) (uintptr_t) ret;
     arena->brkp += newpgsz;
@@ -74,21 +75,18 @@ mem_init(void) {
 
 void*
 mem_alloc_data(size_t size, size_t alignment) {
-    return arena_alloc(&main_arena_data, size, alignment);
+    return arena_alloc(&main_arena_data, size, alignment, /*exec=*/false);
 }
 
 void*
 mem_alloc_code(size_t size, size_t alignment) {
-    return arena_alloc(&main_arena_code, size, alignment);
+    return arena_alloc(&main_arena_code, size, alignment, /*exec=*/true);
 }
 
 int
 mem_write_code(void* dst, const void* src, size_t size) {
-    char* pgstart = (char*) ALIGN_DOWN((uintptr_t) dst, getpagesize());
-    char* pgend = (char*) ALIGN_UP((uintptr_t) dst + size, getpagesize());
-    int ret = mprotect(pgstart, pgend - pgstart, PROT_READ|PROT_WRITE);
-    if (ret < 0)
-        return ret;
+    // Note: if W^X is enforced, the pages need to be mapped somewhere else for
+    // writing (e.g., using memfd).
     memcpy(dst, src, size);
 
     // Flush ICache, except for x86-64.
@@ -100,5 +98,5 @@ mem_write_code(void* dst, const void* src, size_t size) {
 #else
 #error "Implement ICache flush for unknown target"
 #endif
-    return mprotect(pgstart, pgend - pgstart, PROT_READ|PROT_EXEC);
+    return 0;
 }
