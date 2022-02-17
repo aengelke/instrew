@@ -1,4 +1,5 @@
 
+#include <stdatomic.h>
 #include <common.h>
 #include <elf.h>
 #include <limits.h>
@@ -178,29 +179,11 @@ rtld_patch_create_stub(Rtld* rtld, const struct RtldPatchData* patch_data,
 
 
 struct RtldObject {
-    uintptr_t addr;
+    _Atomic uintptr_t addr;
     void* entry;
     void* base;
     size_t size;
 };
-
-static RtldObject*
-rtld_hash_lookup(Rtld* r, uintptr_t addr) {
-    if (!addr)
-        return NULL;
-    size_t hash = RTLD_HASH(addr);
-    size_t end = ((hash-1) & RTLD_HASH_MASK);
-    if (hash == end)
-        __builtin_unreachable();
-    for (size_t i = hash; i != end; i = (i+1) & RTLD_HASH_MASK) {
-        RtldObject* obj = &r->objects[i];
-        if (LIKELY(obj->addr == addr || obj->addr == 0))
-            return obj;
-        // dprintf(2, "! Collision for %lx: %lx\n", addr, obj->addr);
-    }
-    dprintf(2, "hashtable full!\n");
-    return NULL;
-}
 
 struct RtldElf {
     uint8_t* base;
@@ -515,17 +498,29 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
 
 static int rtld_set(Rtld* r, uintptr_t addr, void* entry, void* obj_base,
                     size_t obj_size) {
-    RtldObject* obj = rtld_hash_lookup(r, addr);
-    if (obj == NULL)
-        return -ENOSPC;
-    if (obj->addr != 0)
-        return -EEXIST;
+    // Note: not thread-safe. We first find a spot, then populate the data, and
+    // then write the address, so that concurrent readers only ever see valid
+    // data. However, a concurrent call to add an entry might cause them to
+    // write to the same spot.
 
-    obj->addr = addr;
-    obj->entry = entry;
-    obj->base = obj_base;
-    obj->size = obj_size;
-    return 0;
+    if (!addr) // 0 is reserved for "empty"
+        return -EINVAL;
+    size_t hash = RTLD_HASH(addr);
+    for (size_t i = 0; i <= RTLD_HASH_MASK; i++) {
+        RtldObject* obj = &r->objects[(hash + i) & RTLD_HASH_MASK];
+        uintptr_t obj_addr = atomic_load_explicit(&obj->addr, memory_order_relaxed);
+        if (obj_addr == addr)
+            return -EEXIST;
+        if (!obj_addr) {
+            obj->entry = entry;
+            obj->base = obj_base;
+            obj->size = obj_size;
+            atomic_store_explicit(&obj->addr, addr, memory_order_release);
+            return 0;
+        }
+    }
+
+    return -ENOSPC;
 }
 
 int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
@@ -657,10 +652,18 @@ rtld_init(Rtld* r, int perfmap_fd, const struct DispatcherInfo* disp_info) {
 
 int
 rtld_resolve(Rtld* r, uintptr_t addr, void** out_entry) {
-    RtldObject* obj = rtld_hash_lookup(r, addr);
-    if (obj != NULL && obj->addr == addr) {
-        *out_entry = obj->entry;
-        return 0;
+    if (!addr) // 0 is reserved for "empty"
+        return -ENOENT;
+    size_t hash = RTLD_HASH(addr);
+    for (size_t i = 0; i <= RTLD_HASH_MASK; i++) {
+        RtldObject* obj = &r->objects[(hash + i) & RTLD_HASH_MASK];
+        uintptr_t obj_addr = atomic_load_explicit(&obj->addr, memory_order_acquire);
+        if (!obj_addr)
+            break;
+        if (obj_addr == addr) {
+            *out_entry = obj->entry;
+            return 0;
+        }
     }
 
     return -ENOENT;
