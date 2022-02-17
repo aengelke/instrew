@@ -177,6 +177,13 @@ rtld_patch_create_stub(Rtld* rtld, const struct RtldPatchData* patch_data,
 }
 
 
+struct RtldObject {
+    uintptr_t addr;
+    void* entry;
+    void* base;
+    size_t size;
+};
+
 static RtldObject*
 rtld_hash_lookup(Rtld* r, uintptr_t addr) {
     if (!addr)

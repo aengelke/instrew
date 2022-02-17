@@ -5,12 +5,7 @@
 #include <common.h>
 #include <dispatcher-info.h>
 
-typedef struct {
-    uintptr_t addr;
-    void* entry;
-    void* base;
-    size_t size;
-} RtldObject;
+typedef struct RtldObject RtldObject;
 struct Rtld {
     int perfmap_fd;
     const struct DispatcherInfo* disp_info;
