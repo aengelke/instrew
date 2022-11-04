@@ -422,7 +422,12 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         nfn = llvm::Function::Create(fn_ty, linkage, fn->getName() + "_aapcsx", mod);
         nfn->copyAttributesFrom(fn);
         llvm::AttributeList al = nfn->getAttributes();
+#if LL_LLVM_MAJOR < 14
         al = al.addParamAttributes(ctx, 8, al.getParamAttributes(0));
+#else
+        llvm::AttrBuilder ab(ctx, al.getParamAttrs(0));
+        al = al.addParamAttributes(ctx, 8, ab);
+#endif
         nfn->setAttributes(al.removeParamAttributes(ctx, 0));
         nfn->addParamAttr(8, llvm::Attribute::SwiftSelf);
         sptr = &nfn->arg_begin()[8];
@@ -481,7 +486,12 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         nfn = llvm::Function::Create(fn_ty, linkage, fn->getName() + "_hhvm", mod);
         nfn->copyAttributesFrom(fn);
         llvm::AttributeList al = nfn->getAttributes();
+#if LL_LLVM_MAJOR < 14
         al = al.addParamAttributes(ctx, 1, al.getParamAttributes(0));
+#else
+        llvm::AttrBuilder ab(ctx, al.getParamAttrs(0));
+        al = al.addParamAttributes(ctx, 1, ab);
+#endif
         nfn->setAttributes(al.removeParamAttributes(ctx, 0));
         nfn->setCallingConv(llvm::CallingConv::HHVM);
         sptr = &nfn->arg_begin()[1];

@@ -4,6 +4,7 @@
 #include "cache.h"
 #include "config.h"
 
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdio>
