@@ -1,8 +1,8 @@
 image: debian/sid
-arch: arm64
+arch: amd64
 packages:
   - meson
-  - llvm-11-dev
+  - llvm-15-dev
   - libssl-dev
   - pkg-config
 sources:
