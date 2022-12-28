@@ -17,15 +17,6 @@
 #define PLATFORM_STRING "x86_64"
 
 
-static int open_perfmap(void) {
-    int pid = getpid();
-
-    char filename[32];
-    snprintf(filename, sizeof(filename), "/tmp/perf-%u.map", pid);
-
-    return open(filename, O_CREAT|O_TRUNC|O_NOFOLLOW|O_WRONLY|O_CLOEXEC, 0600);
-}
-
 int main(int argc, char** argv) {
     int i;
     int retval;
@@ -34,7 +25,7 @@ int main(int argc, char** argv) {
 
     // Initialize state.
     struct State state = {0};
-    state.config.perfmap_fd = -1;
+    state.config.perf_mode = 0;
 
     const char* server_argv[64] = { INSTREW_DEFAULT_SERVER };
     unsigned server_argc = 1;
@@ -57,7 +48,9 @@ int main(int argc, char** argv) {
                     *arg++ = 0;
 
                 if (!strcmp(current, "perfmap")) {
-                    state.config.perfmap_fd = open_perfmap();
+                    state.config.perf_mode = 1;
+                } else if (!strcmp(current, "perfdump")) {
+                    state.config.perf_mode = 2;
                 } else if (!strcmp(current, "trace")) {
                     state.config.print_trace = true;
                 } else if (!strcmp(current, "regs")) {
@@ -191,10 +184,15 @@ int main(int argc, char** argv) {
         stack_top[i] = (size_t) argv[i];
     *(--stack_top) = argc; // Argument Count
 
-    retval = rtld_init(&state.rtld, state.config.perfmap_fd, disp_info);
+    retval = rtld_init(&state.rtld, disp_info);
     if (retval < 0) {
         puts("error: could not initialize runtime linker");
         return retval;
+    }
+
+    retval = rtld_perf_init(&state.rtld, state.config.perf_mode);
+    if (retval < 0) {
+        puts("warning: could not initialize perf support");
     }
 
     void* initobj;

@@ -298,6 +298,9 @@ long syscall(long number, long a1, long a2, long a3, long a4, long a5,
 int getpid(void) {
     return syscall0(__NR_getpid);
 }
+int gettid(void) {
+    return syscall0(__NR_gettid);
+}
 int open(const char* pathname, int flags, int mode) {
     return openat(AT_FDCWD, pathname, flags, mode);
 }

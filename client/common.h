@@ -37,6 +37,7 @@ void* get_thread_area(void);
 
 __attribute__((noreturn)) void _exit(int status);
 int getpid(void);
+int gettid(void);
 
 // time.h
 int clock_gettime(int clk_id, struct timespec* tp);

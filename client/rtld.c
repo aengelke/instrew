@@ -18,12 +18,11 @@
 #endif // !defined(SHT_X86_64_UNWIND)
 
 #if defined(__x86_64__)
-#define elf_check_arch(x) ((x)->e_machine == EM_X86_64)
+#define EM_CURRENT EM_X86_64
 #elif defined(__aarch64__)
-#define elf_check_arch(x) ((x)->e_machine == EM_AARCH64)
-#else
-#define elf_check_arch(x) (0)
+#define EM_CURRENT EM_AARCH64
 #endif
+#define elf_check_arch(x) ((x)->e_machine == EM_CURRENT)
 
 #define CHECK_SIGNED_BITS(val,bits) \
             ((val) >= -(1ll << (bits-1)) && (val) < (1ll << (bits-1))-1)
@@ -95,7 +94,7 @@ static int
 plt_create(const struct DispatcherInfo* disp_info, void** out_plt) {
     size_t plt_entry_count = sizeof(plt_entries) / sizeof(plt_entries[0]) - 1;
     size_t code_size = plt_entry_count * PLT_FUNC_SIZE;
-    size_t data_offset = ALIGN_UP(code_size, 0x40);
+    size_t data_offset = ALIGN_UP(code_size, 0x40u);
     size_t data_size = plt_entry_count * sizeof(uintptr_t);
     size_t plt_size = data_offset + data_size;
 
@@ -523,6 +522,127 @@ static int rtld_set(Rtld* r, uintptr_t addr, void* entry, void* obj_base,
     return -ENOSPC;
 }
 
+// Perf support for simple maps and jitdump files.
+// https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/tools/perf/Documentation/jit-interface.txt
+// https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/tools/perf/Documentation/jitdump-specification.txt
+
+struct RtldPerfJitHeader {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t total_size;
+    uint32_t elf_mach;
+    uint32_t pad1;
+    uint32_t pid;
+    uint64_t timestamp;
+    uint64_t flags;
+};
+
+struct RtldPerfJitRecordHeader {
+    uint32_t id;
+    uint32_t total_size;
+    uint64_t timestamp;
+};
+
+struct RtldPerfJitRecordCodeLoad {
+    struct RtldPerfJitRecordHeader header;
+    uint32_t pid;
+    uint32_t tid;
+    uint64_t vma;
+    uint64_t code_addr;
+    uint64_t code_size;
+    uint64_t code_index;
+};
+
+static uint64_t
+rtld_perf_timestamp(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+        return (uint64_t) ts.tv_sec * 1000000000 + (uint64_t) ts.tv_nsec;
+    return 0;
+}
+
+static void
+rtld_perf_notify(Rtld* r, uintptr_t addr, void* entry, size_t codesize,
+                 const char* name) {
+    if (UNLIKELY(r->perfmap_fd >= 0)) {
+        dprintf(r->perfmap_fd, "%lx %lx %lx_%s\n",
+                (uintptr_t) entry, codesize, addr, name);
+    }
+
+    if (UNLIKELY(r->perfdump_fd >= 0)) {
+        char namebuf[64];
+        size_t namelen = snprintf(namebuf, sizeof(namebuf), "%lx_%s", addr, name);
+        if (namelen >= sizeof(namebuf))
+            namelen = sizeof(namebuf) - 1;
+
+        struct RtldPerfJitRecordCodeLoad record = {
+            .header = {
+                .id = 0 /* JIT_CODE_LOAD */,
+                .total_size = (uint32_t) (sizeof(record) + namelen + 1 + codesize),
+                .timestamp = rtld_perf_timestamp(),
+            },
+            .pid = (uint32_t) getpid(),
+            .tid = (uint32_t) gettid(),
+            .vma = (uint64_t) entry,
+            .code_addr = (uint64_t) entry,
+            .code_size = codesize,
+            .code_index = addr, // unique index, use guest virtual address
+        };
+        write_full(r->perfdump_fd, &record, sizeof(record));
+        write_full(r->perfdump_fd, namebuf, namelen + 1);
+        write_full(r->perfdump_fd, entry, codesize);
+    }
+}
+
+int
+rtld_perf_init(Rtld* r, int mode) {
+    if (mode < 1)
+        return 0;
+
+    int pid = getpid();
+
+    char name[32];
+    snprintf(name, sizeof(name), "/tmp/perf-%u.map", pid);
+    int map_fd = open(name, O_CREAT|O_TRUNC|O_NOFOLLOW|O_WRONLY|O_CLOEXEC, 0600);
+    if (map_fd < 0)
+        return map_fd;
+
+    r->perfmap_fd = map_fd;
+
+    if (mode < 2)
+        return 0;
+
+    snprintf(name, sizeof(name), "/tmp/jit-%u.dump", pid);
+    int dump_fd = open(name, O_CREAT|O_TRUNC|O_NOFOLLOW|O_RDWR|O_CLOEXEC, 0600);
+    if (dump_fd < 0)
+        return dump_fd;
+
+    struct RtldPerfJitHeader header = {
+        .magic = 0x4A695444, // ASCII "JiTD"
+        .version = 1,
+        .total_size = sizeof(header),
+        .elf_mach = EM_CURRENT,
+        .pad1 = 0,
+        .pid = (uint32_t) getpid(),
+        .timestamp = rtld_perf_timestamp(),
+        .flags = 0,
+    };
+    if (write_full(dump_fd, &header, sizeof(header)) < 0) {
+        close(dump_fd);
+        return -EIO;
+    }
+    void* marker = mmap(NULL, getpagesize(), PROT_READ|PROT_EXEC, MAP_PRIVATE,
+                        dump_fd, 0);
+    if (BAD_ADDR(marker)) {
+        close(dump_fd);
+        return -EIO;
+    }
+
+    r->perfdump_fd = dump_fd;
+
+    return 0;
+}
+
 int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
     int retval;
 
@@ -618,10 +738,7 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
             if (retval < 0)
                 goto out;
 
-            if (UNLIKELY(r->perfmap_fd >= 0)) {
-                dprintf(r->perfmap_fd, "%lx %lx %lx_%s\n",
-                        entry, elf_sym->st_size, addr, name);
-            }
+            rtld_perf_notify(r, addr, (void*) entry, elf_sym->st_size, name);
         }
     }
 
@@ -633,14 +750,15 @@ out:
 }
 
 int
-rtld_init(Rtld* r, int perfmap_fd, const struct DispatcherInfo* disp_info) {
+rtld_init(Rtld* r, const struct DispatcherInfo* disp_info) {
     size_t table_size = sizeof(RtldObject) * (1 << RTLD_HASH_BITS);
     RtldObject* objects = mem_alloc_data(table_size, getpagesize());
     if (BAD_ADDR(objects))
         return (int) (uintptr_t) objects;
 
     r->objects = objects;
-    r->perfmap_fd = perfmap_fd;
+    r->perfmap_fd = -1;
+    r->perfdump_fd = -1;
     r->disp_info = disp_info;
 
     int retval = plt_create(disp_info, &r->plt);

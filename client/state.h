@@ -17,7 +17,7 @@ struct State {
     uint64_t rew_time;
 
     struct {
-        int perfmap_fd;
+        int perf_mode;
         bool print_trace;
         bool print_regs;
         bool profile_rewriting;

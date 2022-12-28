@@ -8,6 +8,7 @@
 typedef struct RtldObject RtldObject;
 struct Rtld {
     int perfmap_fd;
+    int perfdump_fd;
     const struct DispatcherInfo* disp_info;
 
     RtldObject* objects;
@@ -28,7 +29,9 @@ struct RtldPatchData {
     uintptr_t patch_addr;
 };
 
-int rtld_init(Rtld* r, int perfmap_fd, const struct DispatcherInfo* disp_info);
+int rtld_init(Rtld* r, const struct DispatcherInfo* disp_info);
+/// Init perf support, modes: 0=none, 1=map, 2=map+jitdump
+int rtld_perf_init(Rtld* r, int mode);
 int rtld_resolve(Rtld* r, uintptr_t addr, void** out_entry);
 
 int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew);
