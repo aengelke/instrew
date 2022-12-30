@@ -39,7 +39,7 @@ config_data = configuration_data()
 config_data.set_quoted('INSTREW_DEFAULT_SERVER', get_option('prefix')/get_option('bindir')/'instrew-server')
 configure_file(configuration: config_data, output: 'instrew-client-config.h')
 
-executable('instrew', sources,
+client = executable('instrew', sources,
            include_directories: include_directories('.', '../shared'),
            c_args: client_c_args,
            link_args: client_link_args,

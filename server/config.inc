@@ -2,6 +2,7 @@ INSTREW_OPT(int, targetopt, 3)
 INSTREW_OPT(int, callconv, 1) // default to fast cc
 INSTREW_OPT(std::string, tool, "")
 INSTREW_OPT(bool, extrainstcombine, true)
+INSTREW_OPT(int, perf, 0)
 INSTREW_OPT(bool, dumpobj, false)
 INSTREW_OPT(int, dumpir, false)
 INSTREW_OPT(bool, profile, false)

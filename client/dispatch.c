@@ -20,7 +20,7 @@ static void
 print_trace(struct CpuState* cpu_state, uintptr_t addr) {
     uint64_t* cpu_regs = (uint64_t*) cpu_state->regdata;
     dprintf(2, "Trace 0x%lx\n", addr);
-    if (cpu_state->state->config.print_regs) {
+    if (cpu_state->state->tc.tc_print_regs) {
         dprintf(2, "RAX=%lx RBX=%lx RCX=%lx RDX=%lx\n", cpu_regs[1], cpu_regs[4], cpu_regs[2], cpu_regs[3]);
         dprintf(2, "RSI=%lx RDI=%lx RBP=%lx RSP=%lx\n", cpu_regs[7], cpu_regs[8], cpu_regs[6], cpu_regs[5]);
         dprintf(2, "R8 =%lx R9 =%lx R10=%lx R11=%lx\n", cpu_regs[9], cpu_regs[10], cpu_regs[11], cpu_regs[12]);
@@ -52,7 +52,7 @@ resolve_func(struct CpuState* cpu_state, uintptr_t addr,
     if (UNLIKELY(retval < 0)) {
         struct timespec start_time;
         struct timespec end_time;
-        if (UNLIKELY(state->config.profile_rewriting))
+        if (UNLIKELY(state->tc.tc_profile))
             clock_gettime(CLOCK_MONOTONIC, &start_time);
 
         void* obj_base;
@@ -68,7 +68,7 @@ resolve_func(struct CpuState* cpu_state, uintptr_t addr,
         if (retval < 0)
             goto error;
 
-        if (UNLIKELY(state->config.profile_rewriting)) {
+        if (UNLIKELY(state->tc.tc_profile)) {
             clock_gettime(CLOCK_MONOTONIC, &end_time);
             size_t time_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000
                              + (end_time.tv_nsec - start_time.tv_nsec);
@@ -79,7 +79,7 @@ resolve_func(struct CpuState* cpu_state, uintptr_t addr,
     // If we want a trace, don't update quick TLB. This forces a full resolve on
     // every dispatch, yielding a complete trace. Tracing is slow anyway, so we
     // don't care about performance when tracing is active.
-    if (LIKELY(!state->config.print_trace)) {
+    if (LIKELY(!state->tc.tc_print_trace)) {
         // If possible, patch code which caused us to get here.
         rtld_patch(patch_data, func);
 

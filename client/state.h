@@ -16,13 +16,6 @@ struct State {
 
     uint64_t rew_time;
 
-    struct {
-        int perf_mode;
-        bool print_trace;
-        bool print_regs;
-        bool profile_rewriting;
-    } config;
-
     struct sigaction sigact[_NSIG];
 
     struct TranslatorServerConfig tsc;

@@ -39,87 +39,20 @@ static int32_t translator_hdr_recv(Translator* t, uint32_t id) {
     return sz;
 }
 
-struct spawn_args {
-    int pipes[6];
-    const char* const* argv;
-};
-
-static int translator_init_child(void* args_cp) {
-    int ret;
-
-    struct spawn_args* args = args_cp;
-    close(args->pipes[0]);
-    close(args->pipes[3]);
-    close(args->pipes[4]);
-    ret = dup2(args->pipes[1], 1);
-    if (ret < 0)
-        goto fail;
-    ret = dup2(args->pipes[2], 0);
-    if (ret < 0)
-        goto fail;
-
-    ret = execve(args->argv[0], args->argv, (const char* const*) environ);
-    if (ret < 0)
-        goto fail;
-
-fail:
-    write(args->pipes[5], &ret, sizeof(ret));
-    _exit(127);
-}
-
-int translator_init(Translator* t, const char* const* server_argv,
+int translator_init(Translator* t, const char* server_config,
                     const struct TranslatorServerConfig* tsc) {
-    int ret;
-    struct spawn_args args;
-    char stack[1024];
-
-    args.argv = server_argv;
-
-    ret = pipe2(&args.pipes[0], 0);
-    if (ret < 0)
-        return ret;
-    ret = pipe2(&args.pipes[2], 0);
-    if (ret < 0) {
-        close(args.pipes[0]);
-        close(args.pipes[1]);
-        return ret;
-    }
-
-    // Pipe used for passing an error from the child to the parent
-    ret = pipe2(&args.pipes[4], O_CLOEXEC);
-    if (ret < 0) {
-        close(args.pipes[0]);
-        close(args.pipes[1]);
-        close(args.pipes[2]);
-        close(args.pipes[3]);
-        return ret;
-    }
-
-    ret = __clone(translator_init_child, stack + sizeof(stack),
-                  CLONE_VM|CLONE_VFORK|SIGCHLD, &args);
-    close(args.pipes[1]); // write-end of first pipe
-    close(args.pipes[2]); // read-end of second pipe
-    close(args.pipes[5]); // write-end of error pipe
-    if (ret > 0) {
-        if (read(args.pipes[4], &ret, sizeof(ret)) != sizeof(ret))
-            ret = 0;
-    }
-
-    close(args.pipes[4]);
-    if (ret == 0) {
-        t->rd_fd = args.pipes[0];
-        t->wr_fd = args.pipes[3];
-    } else {
-        close(args.pipes[0]);
-        close(args.pipes[3]);
-        return ret;
-    }
+    uint64_t fds_raw = 0;
+    for (size_t i = 0; server_config[i]; i++)
+        fds_raw |= (uint64_t) ((server_config[i] - '0') & 7) << ((3 * i) & 63);
+    t->rd_fd = fds_raw & 0xffffffff;
+    t->wr_fd = fds_raw >> 32;
 
     t->written_bytes = 0;
     t->last_hdr = (TranslatorMsgHdr) {MSGID_UNKNOWN, 0};
     t->recvbuf = NULL;
     t->recvbuf_sz = 0;
 
+    int ret;
     if ((ret = translator_hdr_send(t, MSGID_C_INIT, sizeof *tsc)))
         return ret;
     if ((ret = write_full(t->wr_fd, tsc, sizeof *tsc)) != sizeof *tsc)

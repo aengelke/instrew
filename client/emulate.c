@@ -527,7 +527,7 @@ emulate_syscall(uint64_t* cpu_regs) {
     }
 
     case 231: {
-        if (UNLIKELY(state->config.profile_rewriting)) {
+        if (UNLIKELY(state->tc.tc_profile)) {
             dprintf(2, "Rewriting %u bytes took %u ms\n",
                     (uint32_t) state->translator.written_bytes,
                     (uint32_t) (state->rew_time / 1000000));

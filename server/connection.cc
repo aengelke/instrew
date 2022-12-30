@@ -12,8 +12,11 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <string>
+#include <string_view>
 #include <unistd.h>
 #include <unordered_map>
+#include <sys/mman.h>
 #include <sys/sendfile.h>
 
 
@@ -49,8 +52,11 @@ private:
     Msg::Hdr wr_hdr;
     Msg::Hdr recv_hdr;
 
+    Conn(std::FILE* file_rd, std::FILE* file_wr)
+            : file_rd(file_rd), file_wr(file_wr), recv_hdr{} {}
+
 public:
-    Conn() : file_rd(stdin), file_wr(stdout), recv_hdr{} { }
+    static Conn CreateFork(char* argv0, size_t uargc, const char* const* uargv);
 
     Msg::Id RecvMsg() {
         assert(recv_hdr.sz == 0 && "unread message parts");
@@ -102,6 +108,70 @@ public:
         Write(&val, sizeof(T));
     }
 };
+
+Conn Conn::CreateFork(char* argv0, size_t uargc, const char* const* uargv) {
+    int pipes[4];
+    int ret = pipe2(&pipes[0], 0);
+    if (ret < 0) {
+        perror("pipe2");
+        std::exit(1);
+    }
+    ret = pipe2(&pipes[2], 0);
+    if (ret < 0) {
+        perror("pipe2");
+        std::exit(1);
+    }
+
+    uint64_t raw_fds = (uint64_t) pipes[0] | (uint64_t) pipes[3] << 32;
+    std::string client_config = "";
+    for (; raw_fds; raw_fds >>= 3)
+        client_config.append(1, '0' + (raw_fds&7));
+
+    std::vector<const char*> exec_args;
+    exec_args.reserve(uargc + 3);
+    exec_args.push_back(argv0);
+    exec_args.push_back(client_config.c_str());
+    for (size_t i = 0; i < uargc; i++)
+        exec_args.push_back(uargv[i]);
+    exec_args.push_back(nullptr);
+
+    static const unsigned char instrew_stub[] = {
+#include "client.inc"
+    };
+
+    int memfd = memfd_create("instrew_stub", MFD_CLOEXEC);
+    if (memfd < 0) {
+        perror("memfd_create");
+        std::exit(1);
+    }
+    size_t written = 0;
+    size_t total = sizeof(instrew_stub);
+    while (written < total) {
+        auto wres = write(memfd, instrew_stub + written, total - written);
+        if (wres < 0) {
+            perror("write");
+            std::exit(1);
+        }
+        written += wres;
+    }
+
+    pid_t forkres = fork();
+    if (forkres < 0) {
+        perror("fork");
+        std::exit(1);
+    } else if (forkres > 0) {
+        close(pipes[1]); // write-end of first pipe
+        close(pipes[2]); // read-end of second pipe
+        fexecve(memfd, const_cast<char* const*>(&exec_args[0]), environ);
+        perror("fexecve");
+        std::exit(1);
+    }
+    close(memfd);
+    close(pipes[0]);
+    close(pipes[3]);
+
+    return Conn(fdopen(pipes[2], "rb"), fdopen(pipes[1], "wb"));
+}
 
 class RemoteMemory {
 private:
@@ -159,9 +229,9 @@ public:
 
 struct IWConnection {
     const struct IWFunctions* fns;
+    InstrewConfig& cfg;
     Conn& conn;
 
-    InstrewConfig cfg;
     IWServerConfig iwsc;
     IWClientConfig iwcc;
     bool need_iwcc;
@@ -169,8 +239,8 @@ struct IWConnection {
     RemoteMemory remote_memory;
     instrew::Cache cache;
 
-    IWConnection(const struct IWFunctions* fns, Conn& conn)
-            : fns(fns), conn(conn), remote_memory(conn) {}
+    IWConnection(const struct IWFunctions* fns, InstrewConfig& cfg, Conn& conn)
+            : fns(fns), cfg(cfg), conn(conn), remote_memory(conn) {}
 
 private:
     FILE* OpenObjDump(uint64_t addr) {
@@ -209,7 +279,7 @@ public:
             cache.Put(hash, size, static_cast<const char*>(data));
     }
 
-    int Run(int argc, char** argv) {
+    int Run() {
         if (conn.RecvMsg() != Msg::C_INIT) {
             std::cerr << "error: expected C_INIT message" << std::endl;
             return 1;
@@ -218,7 +288,6 @@ public:
         // In mode 0, we need to respond with a client config.
         need_iwcc = iwsc.tsc_server_mode == 0;
 
-        cfg = InstrewConfig(argc - 1, argv + 1);
         cache = instrew::Cache(cfg);
 
         IWState* state = fns->init(this, cfg);
@@ -260,10 +329,8 @@ void iw_sendobj(IWConnection* iwc, uintptr_t addr, const void* data,
 }
 
 int iw_run_server(const struct IWFunctions* fns, int argc, char** argv) {
-    // Set stdio to unbuffered
-    std::setbuf(stdin, nullptr);
-    Conn conn; // uses stdio
-
-    IWConnection iwc{fns, conn};
-    return iwc.Run(argc, argv);
+    InstrewConfig cfg(argc - 1, argv + 1);
+    Conn conn = Conn::CreateFork(argv[0], cfg.user_argc, cfg.user_args);
+    IWConnection iwc{fns, cfg, conn};
+    return iwc.Run();
 }

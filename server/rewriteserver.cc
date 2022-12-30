@@ -234,6 +234,8 @@ public:
         else
             instrew_cc = CallConv::CDECL;
         iwcc->tc_callconv = GetCallConvClientNumber(instrew_cc);
+        iwcc->tc_profile = cfg.profile;
+        iwcc->tc_perf = cfg.perf;
 
         llvm::GlobalVariable* pc_base_var = CreatePcBase(ctx);
         pc_base = llvm::ConstantExpr::getPtrToInt(pc_base_var,

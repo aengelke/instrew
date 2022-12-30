@@ -25,59 +25,15 @@ int main(int argc, char** argv) {
 
     // Initialize state.
     struct State state = {0};
-    state.config.perf_mode = 0;
 
-    const char* server_argv[64] = { INSTREW_DEFAULT_SERVER };
-    unsigned server_argc = 1;
-    unsigned server_maxargs = sizeof(server_argv) / sizeof(server_argv[0]) - 2;
-
-    bool delay_server = false;
-
-    while (argc > 1) {
-        --argc;
-        char* arg = *(++argv);
-        if (arg[0] != '-' || !strcmp(arg, "--"))
-            break;
-
-        if (strncmp(arg, "-C", 2) == 0) {
-            arg += 2;
-            do {
-                char* current = arg;
-                arg = strchr(arg, ',');
-                if (arg)
-                    *arg++ = 0;
-
-                if (!strcmp(current, "perfmap")) {
-                    state.config.perf_mode = 1;
-                } else if (!strcmp(current, "perfdump")) {
-                    state.config.perf_mode = 2;
-                } else if (!strcmp(current, "trace")) {
-                    state.config.print_trace = true;
-                } else if (!strcmp(current, "regs")) {
-                    state.config.print_regs = true;
-                } else if (!strcmp(current, "profile")) {
-                    state.config.profile_rewriting = true;
-                } else if (!strcmp(current, "delay")) {
-                    delay_server = true;
-                } else {
-                    dprintf(2, "ignoring unknown client arg %s\n", current);
-                }
-            } while (arg);
-        } else if (strncmp(arg, "-server=", 8) == 0) {
-            server_argv[0] = arg + 8;
-        } else {
-            if (server_argc >= server_maxargs) {
-                puts("error: too many server arguments");
-                return -ENOSPC;
-            }
-            server_argv[server_argc++] = arg;
-        }
-    }
-
-    if (argc < 1) {
-        puts("usage: [OPTIONS] EXECUTABLE [ARGS...]");
+    if (argc < 3) {
+        puts("usage: CONFSTR EXECUTABLE [ARGS...]");
         return 1;
     }
+
+    char* server_config = argv[1];
+    argc -= 2;
+    argv += 2;
 
     signal_init(&state);
 
@@ -94,11 +50,6 @@ int main(int argc, char** argv) {
         return retval;
     }
 
-    if (server_argv[0] == NULL) {
-        puts("error: no server specified, use -server=<path>");
-        return 1;
-    }
-
     state.tsc.tsc_guest_arch = info.machine;
 #ifdef __x86_64__
     state.tsc.tsc_host_arch = EM_X86_64;
@@ -109,15 +60,11 @@ int main(int argc, char** argv) {
 #error "Unsupported architecture!"
 #endif
 
-    retval = translator_init(&state.translator, server_argv, &state.tsc);
+    retval = translator_init(&state.translator, server_config, &state.tsc);
     if (retval != 0) {
         puts("error: could not spawn rewriting server");
         return retval;
     }
-
-    // Add a short delay to allow attaching a debugger to the server
-    if (delay_server)
-        nanosleep(&(struct timespec) { 1, 0 }, NULL);
 
     retval = translator_config_fetch(&state.translator, &state.tc);
     if (retval != 0) {
@@ -190,7 +137,7 @@ int main(int argc, char** argv) {
         return retval;
     }
 
-    retval = rtld_perf_init(&state.rtld, state.config.perf_mode);
+    retval = rtld_perf_init(&state.rtld, state.tc.tc_perf);
     if (retval < 0) {
         puts("warning: could not initialize perf support");
     }

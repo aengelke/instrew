@@ -55,7 +55,9 @@ InstrewConfig::InstrewConfig(int argc, const char* const* argv) {
             else
                 std::cerr << "ignoring unknown server arg: " << realarg << std::endl;
         } else {
-            std::cerr << "ignoring unknown server arg: " << arg << std::endl;
+            user_argc = argc - i;
+            user_args = &argv[i];
+            break;
         }
     }
 }

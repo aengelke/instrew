@@ -21,4 +21,8 @@ INSTREW_SERVER_CONF_INT32(0, stack_alignment, 0)
 #elif defined(INSTREW_CLIENT_CONF)
 // INSTREW_CLIENT_CONF_*(id, name); defaults to zero.
 INSTREW_CLIENT_CONF_INT32(1, callconv)
+INSTREW_CLIENT_CONF_INT32(1, profile)
+INSTREW_CLIENT_CONF_INT32(1, perf)
+INSTREW_CLIENT_CONF_INT32(1, print_trace)
+INSTREW_CLIENT_CONF_INT32(1, print_regs)
 #endif
