@@ -490,6 +490,13 @@ emulate_syscall(uint64_t* cpu_regs) {
         default: goto unhandled;
         }
 
+    case 157: // prctl
+        switch (arg0) {
+        default:
+            res = -EINVAL;
+            break;
+        }
+        break;
     case 158: // arch_prctl
         switch (arg0) {
         default:
@@ -527,6 +534,10 @@ emulate_syscall(uint64_t* cpu_regs) {
         goto native;
     }
 
+    // Some syscalls aren't implemented, but ok to ignore.
+    case 334: // rseq
+        res = -ENOSYS;
+        break;
 
     // Finally, signal handling is a mess and requires a lot more effort.
     case 13: // rt_sigaction
@@ -728,6 +739,11 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
     case 261: nr = __NR_prlimit64; goto native;
     case 276: nr = __NR_renameat2; goto native;
     case 278: nr = __NR_getrandom; goto native;
+
+    // Some syscalls aren't implemented, but ok to ignore.
+    case 293: // rseq
+        res = -ENOSYS;
+        break;
 
     // Finally, signal handling is a mess and requires a lot more effort.
     case 134: // rt_sigaction
