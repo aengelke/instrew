@@ -276,6 +276,8 @@ emulate_syscall(uint64_t* cpu_regs) {
     ssize_t res = -ENOSYS;
 
     switch (nr) {
+        struct stat tmp_struct;
+
     native:
         res = syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
         break;
@@ -330,6 +332,7 @@ emulate_syscall(uint64_t* cpu_regs) {
     case 116: nr = __NR_setgroups; goto native;
     case 137: nr = __NR_statfs; goto native; // FIXME: handle buffer argument
     case 161: nr = __NR_chroot; goto native;
+    case 186: nr = __NR_gettid; goto native;
     case 191: nr = __NR_getxattr; goto native;
     case 192: nr = __NR_lgetxattr; goto native;
     case 193: nr = __NR_fgetxattr; goto native;
@@ -394,33 +397,15 @@ emulate_syscall(uint64_t* cpu_regs) {
         break;
 
     // And some syscalls need special handling, e.g. to different structs.
+    case 262: { // newfstatat
+        uintptr_t tmp_addr = (uintptr_t) &tmp_struct;
+        res = syscall(__NR_newfstatat, arg0, arg1, tmp_addr, arg3, 0, 0);
+        arg1 = arg2;
+        goto fstat_common;
+    }
     case 4: // stat
     case 5: // fstat
     case 6: { // lstat
-        struct stat tmp_struct;
-        struct {
-            unsigned long           st_dev;
-            unsigned long           st_ino;
-            unsigned long           st_nlink;
-
-            unsigned int            st_mode;
-            unsigned int            st_uid;
-            unsigned int            st_gid;
-            unsigned int            __pad0;
-            unsigned long           st_rdev;
-            long                    st_size;
-            long                    st_blksize;
-            long                    st_blocks;
-
-            unsigned long           st_atime;
-            unsigned long           st_atime_nsec;
-            unsigned long           st_mtime;
-            unsigned long           st_mtime_nsec;
-            unsigned long           st_ctime;
-            unsigned long           st_ctime_nsec;
-            long                    __unused[3];
-        } __attribute__((packed))* tgt = (void*) arg1;
-
         uintptr_t tmp_addr = (uintptr_t) &tmp_struct;
         if (nr == 4) // stat
             res = syscall(__NR_newfstatat, AT_FDCWD, arg0, tmp_addr, 0, 0, 0);
@@ -428,7 +413,30 @@ emulate_syscall(uint64_t* cpu_regs) {
             res = syscall(__NR_fstat, arg0, tmp_addr, 0, 0, 0, 0);
         else if (nr == 6) // lstat
             res = syscall(__NR_newfstatat, AT_FDCWD, arg0, tmp_addr, AT_SYMLINK_NOFOLLOW, 0, 0);
+    fstat_common:
         if (res == 0) {
+            struct {
+                unsigned long           st_dev;
+                unsigned long           st_ino;
+                unsigned long           st_nlink;
+
+                unsigned int            st_mode;
+                unsigned int            st_uid;
+                unsigned int            st_gid;
+                unsigned int            __pad0;
+                unsigned long           st_rdev;
+                long                    st_size;
+                long                    st_blksize;
+                long                    st_blocks;
+
+                unsigned long           st_atime;
+                unsigned long           st_atime_nsec;
+                unsigned long           st_mtime;
+                unsigned long           st_mtime_nsec;
+                unsigned long           st_ctime;
+                unsigned long           st_ctime_nsec;
+                long                    __unused[3];
+            } __attribute__((packed))* tgt = (void*) arg1;
             tgt->st_dev = tmp_struct.st_dev;
             tgt->st_ino = tmp_struct.st_ino;
             tgt->st_nlink = tmp_struct.st_nlink;
