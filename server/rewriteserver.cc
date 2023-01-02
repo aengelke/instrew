@@ -374,6 +374,9 @@ private:
                 cur_addr += res.size;
                 new_block = false;
 
+                if (instrew_cfg.granularity <= 0)
+                    goto end_block;
+
                 switch (res.result) {
                 case DecodeResult::BRANCH:
                     addr_queue.push_back(res.branch_target);
@@ -392,7 +395,10 @@ private:
                     break;
                 }
             };
-        end_block:;
+
+        end_block:
+            if (instrew_cfg.granularity <= 1)
+                break;
         }
     }
 
