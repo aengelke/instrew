@@ -221,12 +221,16 @@ emulate_cpuid(uint32_t rax, uint32_t rcx) {
     } else if (rax == 1) { // page 1 (feature information)
         res.res[0] = 0; // eax = <not implemented>
         res.res[1] = 0x00400000; // ecx = movbe
-        res.res[2] = 0x07008040; // edx = pae+cmov+fxsr+sse+sse2
+        res.res[2] = 0x07808141; // edx = pae+cmov+fxsr+sse+sse2+mmx+cx8+fpu
         res.res[3] = 0; // ebx = <not implemented>
     } else if (rax == 2) { // page 2 (TLB/cache/prefetch information)
         // TODO: retrieve actual cache information
         res.res[0] = 0x80000001; // eax = reserved (with al=01)
-        res.res[1] = 0x80000000; // ecx = reserved
+        // Note: some (~2.36) glibc versions depend on knowing the shared cache
+        // size to determine the non-temporal threshold for memset/memcpy.
+        // Without data, memcpy/memset behave wrong for medium-sized copies.
+        // Therefore, spoof some arbitrary data about the L3 cache size.
+        res.res[1] = 0x000000ec; // ecx = null; null; null; L3=24MiB/24w/64l
         res.res[2] = 0x80000000; // edx = reserved
         res.res[3] = 0x80000000; // ebx = reserved
     } else if (rax == 3) { // page 3 (processor serial number; not supported)
