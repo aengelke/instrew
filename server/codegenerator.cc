@@ -90,7 +90,8 @@ public:
             abort();
         }
 
-        if (target->addPassesToEmitMC(mc_pass_manager, mc_ctx, obj_stream, false)) {
+        if (target->addPassesToEmitMC(mc_pass_manager, mc_ctx, obj_stream,
+                                      /*DisableVerify=*/true)) {
             std::cerr << "target doesn't support code gen" << std::endl;
             abort();
         }
