@@ -312,6 +312,7 @@ emulate_syscall(uint64_t* cpu_regs) {
 #endif
     case 24: nr = __NR_sched_yield; goto native;
     case 25: nr = __NR_mremap; goto native;
+    case 28: nr = __NR_madvise; goto native; // TODO: catch dangerous maps
     case 32: nr = __NR_dup; goto native;
     case 39: nr = __NR_getpid; goto native;
     case 41: nr = __NR_socket; goto native;
@@ -486,6 +487,7 @@ emulate_syscall(uint64_t* cpu_regs) {
         case F_SETFD:
         case F_GETFL:
         case F_SETFL:
+        case F_SETOWN:
         case F_SETLK: // note: uses struct flock*
         case F_SETLKW: // note: uses struct flock*
         case F_GETLK: // note: uses struct flock*
@@ -539,6 +541,8 @@ emulate_syscall(uint64_t* cpu_regs) {
     }
 
     // Some syscalls aren't implemented, but ok to ignore.
+    case 203: // sched_setaffinity
+    case 204: // sched_getaffinity
     case 334: // rseq
         res = -ENOSYS;
         break;
@@ -619,6 +623,7 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
         case F_SETFD:
         case F_GETFL:
         case F_SETFL:
+        case F_SETOWN:
         case F_SETLK: // note: uses struct flock*
         case F_SETLKW: // note: uses struct flock*
         case F_GETLK: // note: uses struct flock*
@@ -739,12 +744,15 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
     case 222: nr = __NR_mmap; goto native;
     case 223: nr = __NR_fadvise64; goto native;
     case 226: nr = __NR_mprotect; goto native;
+    case 233: nr = __NR_madvise; goto native;
     case 260: nr = __NR_wait4; goto native;
     case 261: nr = __NR_prlimit64; goto native;
     case 276: nr = __NR_renameat2; goto native;
     case 278: nr = __NR_getrandom; goto native;
 
     // Some syscalls aren't implemented, but ok to ignore.
+    case 122: // sched_setaffinity
+    case 123: // sched_getaffinity
     case 293: // rseq
         res = -ENOSYS;
         break;
