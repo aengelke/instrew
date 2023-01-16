@@ -27,7 +27,7 @@ add_project_arguments(['-Wmissing-field-initializers',
                        '-Werror=implicit-function-declaration'],
                       language: 'c')
 
-add_global_arguments(['-fno-rtti'], language: 'cpp')
+add_global_arguments(['-fno-rtti', '-fno-exceptions'], language: 'cpp')
 
 llvm_version = ['>=12', '<16']
 # First, attempt to use the shared library.

@@ -244,7 +244,7 @@ int load_elf_binary(const char* filename, BinaryInfo* out_info) {
 
         interp_fd = open(interp_name, O_RDONLY|O_CLOEXEC, 0);
         if (interp_fd < 0) {
-            retval = fd;
+            retval = interp_fd;
             goto out_free_ph;
         }
         retval = elf_read(interp_fd, 0, &interp_ehdr, sizeof(Elf_Ehdr));
