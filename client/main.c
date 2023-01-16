@@ -12,8 +12,6 @@
 #include <state.h>
 #include <translator.h>
 
-#include "instrew-client-config.h"
-
 #define PLATFORM_STRING "x86_64"
 
 

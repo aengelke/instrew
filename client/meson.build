@@ -35,14 +35,10 @@ if host_machine.cpu_family() == 'x86_64'
   endif
 endif
 
-config_data = configuration_data()
-config_data.set_quoted('INSTREW_DEFAULT_SERVER', get_option('prefix')/get_option('bindir')/'instrew-server')
-configure_file(configuration: config_data, output: 'instrew-client-config.h')
-
-client = executable('instrew', sources,
-           include_directories: include_directories('.', '../shared'),
-           c_args: client_c_args,
-           link_args: client_link_args,
-           install: true)
+client = executable('instrew-client', sources,
+                    include_directories: include_directories('.', '../shared'),
+                    c_args: client_c_args,
+                    link_args: client_link_args,
+                    install: true)
 
 test('mathlib', executable('test_mathlib', 'math.c', c_args: ['-DTEST', '-fno-builtin']), protocol: 'tap')
