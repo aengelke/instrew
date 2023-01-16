@@ -269,6 +269,24 @@ emulate_cpuid(uint32_t rax, uint32_t rcx) {
     return res;
 }
 
+static ssize_t
+unhandled_syscall(uint64_t nr, uint64_t arg0, uint64_t arg1, uint64_t arg2,
+                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+    // warn only once about each syscall; 1024 should be high enough.
+    static uint64_t warnmap[16];
+    if (nr < sizeof(warnmap) * 8) {
+        if (warnmap[nr / 64] & (1 << nr % 64))
+            goto skipwarning;
+        warnmap[nr / 64] |= 1 << nr % 64;
+    }
+    dprintf(2, "unhandled syscall %u (%lx %lx %lx %lx %lx %lx) = -ENOSYS"
+            " -- please file a bug with these numbers and the architecture\n",
+            nr, arg0, arg1, arg2, arg3, arg4, arg5);
+
+skipwarning:
+    return -ENOSYS;
+}
+
 void
 emulate_syscall(uint64_t* cpu_regs) {
     struct CpuState* cpu_state = CPU_STATE_FROM_REGS(cpu_regs);
@@ -288,9 +306,7 @@ emulate_syscall(uint64_t* cpu_regs) {
 
     default:
     unhandled:
-        dprintf(2, "unhandled syscall %u (%lx %lx %lx %lx %lx %lx)\n",
-                nr, arg0, arg1, arg2, arg3, arg4, arg5);
-        _exit(1);
+        res = unhandled_syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
         break;
 
     // Some syscalls are easy.
@@ -607,9 +623,7 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
 
     default:
     unhandled:
-        dprintf(2, "unhandled syscall %u (%lx %lx %lx %lx %lx %lx)\n",
-                nr, arg0, arg1, arg2, arg3, arg4, arg5);
-        _exit(1);
+        res = unhandled_syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
         break;
 
     case 17: nr = __NR_getcwd; goto native;
