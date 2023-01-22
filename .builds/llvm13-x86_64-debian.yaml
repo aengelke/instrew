@@ -6,7 +6,7 @@ packages:
   - libssl-dev
   - pkg-config
 sources:
-  - https://github.com/aengelke/instrew.git
+  - https://git.sr.ht/~aengelke/instrew
 tasks:
   - build: |
       mkdir build
