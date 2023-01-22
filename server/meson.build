@@ -19,8 +19,8 @@ client_bytes = custom_target('hex-client', output: 'client.inc', input: client,
                              capture: true,
                              command: [python3, '-c', pytobytes, '@INPUT@'])
 
-executable('instrew', sources, client_bytes,
-           include_directories: include_directories('.', '../shared'),
-           dependencies: [librellume, fadec, frvdec, farmdec, libllvm, libcrypto, instrew_api],
-           link_args: ['-ldl'],
-           install: true)
+instrew = executable('instrew', sources, client_bytes,
+                     include_directories: include_directories('.', '../shared'),
+                     dependencies: [librellume, fadec, frvdec, farmdec, libllvm, libcrypto, instrew_api],
+                     link_args: ['-ldl'],
+                     install: true)

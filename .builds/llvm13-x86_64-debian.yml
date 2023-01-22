@@ -5,6 +5,8 @@ packages:
   - llvm-13-dev
   - libssl-dev
   - pkg-config
+  - clang
+  - lld
 sources:
   - https://git.sr.ht/~aengelke/instrew
 tasks:

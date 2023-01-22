@@ -63,3 +63,4 @@ subdir('tool-api')
 subdir('server')
 
 subdir('tools-simple')
+subdir('test')
