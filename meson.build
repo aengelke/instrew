@@ -6,7 +6,7 @@ project('instrew', ['c', 'cpp'],
             'c_std=c11',
             'cpp_std=c++17',
         ],
-        meson_version: '>=0.49')
+        meson_version: '>=0.52')
 
 if host_machine.endian() != 'little'
   error('cannot compile for non-little-endian machine')
@@ -16,13 +16,13 @@ add_project_arguments(['-Wmissing-field-initializers',
                        '-Wunused-parameter',
                        '-Wshadow',
                        '-Wpointer-arith',
-                       '-Wcast-align',
                        '-Wwrite-strings',
                        '-Winline',
                        '-Wformat-nonliteral',
                        '-Wformat-security',
                        '-Wswitch-default',
                        '-Wundef',
+                       '-Wno-cast-align', # we frequently do casts
                        '-Werror=incompatible-pointer-types',
                        '-Werror=implicit-function-declaration'],
                       language: 'c')

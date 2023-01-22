@@ -10,7 +10,7 @@
 
 extern int main(int argc, char** argv);
 void __start_main(const size_t* initial_stack, const size_t* dynv);
-void __restore();
+void __restore(void);
 
 #if UINTPTR_MAX == 0xffffffff
 #define ELF_R_TYPE ELF32_R_TYPE

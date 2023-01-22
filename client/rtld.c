@@ -106,9 +106,9 @@ plt_create(const struct DispatcherInfo* disp_info, void** out_plt) {
         ptrdiff_t offset = (char*) data_ptr - (char*) code_ptr;
 
         if (i == 0)
-            *data_ptr = (uintptr_t) disp_info->quick_dispatch_func;
+            *data_ptr = disp_info->quick_dispatch_func;
         else if (i == 1)
-            *data_ptr = (uintptr_t) disp_info->full_dispatch_func;
+            *data_ptr = disp_info->full_dispatch_func;
         else
             *data_ptr = plt_entries[i].func;
 #if defined(__x86_64__)
@@ -650,7 +650,7 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
     if ((retval = rtld_elf_init(&re, obj_base, obj_size, skew, r)) < 0)
         goto out;
 
-    int i, j;
+    int i;
     Elf64_Shdr* elf_shnt;
 
     // First, check flags and determine total allocation size and alignment
@@ -709,7 +709,7 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
             goto out;
         Elf64_Sym* elf_sym = (Elf64_Sym*) ((uint8_t*) obj_base + elf_shnt->sh_offset);
         Elf64_Sym* elf_sym_end = elf_sym + elf_shnt->sh_size / sizeof(Elf64_Sym);
-        for (j = 0; elf_sym != elf_sym_end; j++, elf_sym++) {
+        for (; elf_sym != elf_sym_end; elf_sym++) {
             if (ELF64_ST_BIND(elf_sym->st_info) != STB_GLOBAL)
                 continue;
             if (ELF64_ST_TYPE(elf_sym->st_info) != STT_FUNC)

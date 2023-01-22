@@ -15,7 +15,8 @@
 
 
 // SIG_DFL should be zero, so zero-initializing sigact is sufficient
-_Static_assert(SIG_DFL == 0, "SIG_DFL mismtach");
+// Unfortunately, this is not an integer constant expression.
+// _Static_assert(SIG_DFL == 0, "SIG_DFL mismtach");
 // We currently only support guest--host combinations with identical signal nums
 _Static_assert(SIGUSR1 == 10, "SIGUSR10 mismtach");
 

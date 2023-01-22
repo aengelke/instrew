@@ -35,7 +35,19 @@ print_trace(struct CpuState* cpu_state, uintptr_t addr) {
 
 #define QUICK_TLB_BITS 10
 #define QUICK_TLB_BITOFF 4 // must be either 1, 2, 3, or 4
-#define QUICK_TLB_IDXSCALE (1 << (4-QUICK_TLB_BITOFF))
+// Clang's inline assembly doesn't support expressions for index scale.
+// #define QUICK_TLB_IDXSCALE (1 << (4-QUICK_TLB_BITOFF))
+#if QUICK_TLB_BITOFF == 4
+#define QUICK_TLB_IDXSCALE 1
+#elif QUICK_TLB_BITOFF == 3
+#define QUICK_TLB_IDXSCALE 2
+#elif QUICK_TLB_BITOFF == 2
+#define QUICK_TLB_IDXSCALE 4
+#elif QUICK_TLB_BITOFF == 1
+#define QUICK_TLB_IDXSCALE 8
+#else
+#error "invalid QUICK_TLB_BITOFF"
+#endif
 #define QUICK_TLB_HASH(addr) (((addr) >> QUICK_TLB_BITOFF) & ((1 << QUICK_TLB_BITS) - 1))
 
 GNU_FORCE_EXTERN
@@ -365,23 +377,23 @@ dispatch_get(struct State* state) {
     static const struct DispatcherInfo infos[] = {
         [0] = {
             .loop_func = dispatch_cdecl_loop,
-            .quick_dispatch_func = dispatch_cdecl,
-            .full_dispatch_func = dispatch_cdecl,
+            .quick_dispatch_func = (uintptr_t) dispatch_cdecl,
+            .full_dispatch_func = (uintptr_t) dispatch_cdecl,
             .patch_data_reg = 6, // rsi
         },
 #if defined(__x86_64__)
         [1] = {
             .loop_func = dispatch_hhvm,
-            .quick_dispatch_func = dispatch_hhvm_tail,
-            .full_dispatch_func = dispatch_hhvm_fullresolve,
+            .quick_dispatch_func = (uintptr_t) dispatch_hhvm_tail,
+            .full_dispatch_func = (uintptr_t) dispatch_hhvm_fullresolve,
             .patch_data_reg = 14, // r14
         },
 #endif // defined(__x86_64__)
 #if defined(__aarch64__)
         [3] = {
             .loop_func = dispatch_aapcsx_loop,
-            .quick_dispatch_func = dispatch_aapcsx,
-            .full_dispatch_func = dispatch_aapcsx_fullresolve,
+            .quick_dispatch_func = (uintptr_t) dispatch_aapcsx,
+            .full_dispatch_func = (uintptr_t) dispatch_aapcsx_fullresolve,
             .patch_data_reg = 16, // x16
         },
 #endif // defined(__aarch64__)

@@ -401,7 +401,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
 
     switch (cc) {
     case CallConv::X86_AARCH64_X: {
-        static const SptrField aapcsx_fields[] = {
+        static constexpr SptrField aapcsx_fields[] = {
             { SptrFields::x86_64::RIP,  0,  0  },
             { SptrFields::x86_64::RAX,  1,  1  },
             { SptrFields::x86_64::RCX,  2,  2  },
@@ -441,7 +441,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         break;
     }
     case CallConv::AARCH64_AARCH64_X: {
-        static const SptrField aapcsx_fields[] = {
+        static constexpr SptrField aapcsx_fields[] = {
             { SptrFields::aarch64::PC,  0,  0  },
             { SptrFields::aarch64::X0,  1,  1  },
             { SptrFields::aarch64::X1,  2,  2  },
@@ -457,7 +457,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         goto callconv_aapcsx_common;
     }
     case CallConv::HHVM: {
-        static const SptrField hhvm_fields[] = {
+        static constexpr SptrField hhvm_fields[] = {
             { SptrFields::x86_64::RIP, 0,  0  },
             { SptrFields::x86_64::RAX, 10, 8  },
             { SptrFields::x86_64::RCX, 7,  5  },
@@ -505,7 +505,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         break;
     }
     case CallConv::RV64_X86_HHVM: {
-        static const SptrField hhvm_fields[] = {
+        static constexpr SptrField hhvm_fields[] = {
             { SptrFields::rv64::RIP, 0,  0  },
             { SptrFields::rv64::X18, 10, 8  },
             { SptrFields::rv64::X1,  7,  5  },
@@ -527,7 +527,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         goto callconv_hhvm_common;
     }
     case CallConv::AARCH64_X86_HHVM: {
-        static const SptrField hhvm_fields[] = {
+        static constexpr SptrField hhvm_fields[] = {
             { SptrFields::aarch64::PC,  0,  0  },
             { SptrFields::aarch64::X0,  10, 8  },
             { SptrFields::aarch64::X1,  7,  5  },

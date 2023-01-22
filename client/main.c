@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
     mprotect(stack, 0x1000, PROT_NONE);
 
     // Initialize stack according to ABI
-    size_t* stack_top = (size_t*) ((uint8_t*) stack + STACK_SIZE);
+    size_t* stack_top = (size_t*) stack + STACK_SIZE/sizeof(size_t);
 
     // Stack alignment
     int envc = 0;
