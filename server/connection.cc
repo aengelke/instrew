@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <sys/mman.h>
 #include <sys/sendfile.h>
+#include <fcntl.h>
 
 
 namespace {
@@ -56,7 +57,7 @@ private:
             : file_rd(file_rd), file_wr(file_wr), recv_hdr{} {}
 
 public:
-    static Conn CreateFork(char* argv0, size_t uargc, const char* const* uargv);
+    static Conn CreateFork(char* argv0, size_t uargc, const char* const* uargv, const bool debug);
 
     Msg::Id RecvMsg() {
         assert(recv_hdr.sz == 0 && "unread message parts");
@@ -109,7 +110,7 @@ public:
     }
 };
 
-Conn Conn::CreateFork(char* argv0, size_t uargc, const char* const* uargv) {
+Conn Conn::CreateFork(char* argv0, size_t uargc, const char* const* uargv, const bool debug) {
     int pipes[4];
     int ret = pipe2(&pipes[0], 0);
     if (ret < 0) {
@@ -135,24 +136,33 @@ Conn Conn::CreateFork(char* argv0, size_t uargc, const char* const* uargv) {
         exec_args.push_back(uargv[i]);
     exec_args.push_back(nullptr);
 
-    static const unsigned char instrew_stub[] = {
-#include "client.inc"
-    };
-
-    int memfd = memfd_create("instrew_stub", MFD_CLOEXEC);
-    if (memfd < 0) {
-        perror("memfd_create");
-        std::exit(1);
-    }
-    size_t written = 0;
-    size_t total = sizeof(instrew_stub);
-    while (written < total) {
-        auto wres = write(memfd, instrew_stub + written, total - written);
-        if (wres < 0) {
-            perror("write");
+    int memfd;
+    if (debug) {
+        memfd = open("/home/hojan/桌面/instrew/build/server/instrew-client", O_RDONLY);
+        if (memfd < 0) {
+            perror("open");
             std::exit(1);
         }
-        written += wres;
+    } else {
+        static const unsigned char instrew_stub[] = {
+#include "client.inc"
+        };
+
+        memfd = memfd_create("instrew_stub", MFD_CLOEXEC);
+        if (memfd < 0) {
+            perror("memfd_create");
+            std::exit(1);
+        }
+        size_t written = 0;
+        size_t total = sizeof(instrew_stub);
+        while (written < total) {
+            auto wres = write(memfd, instrew_stub + written, total - written);
+            if (wres < 0) {
+                perror("write");
+                std::exit(1);
+            }
+            written += wres;
+        }
     }
 
     pid_t forkres = fork();
@@ -330,7 +340,7 @@ void iw_sendobj(IWConnection* iwc, uintptr_t addr, const void* data,
 
 int iw_run_server(const struct IWFunctions* fns, int argc, char** argv) {
     InstrewConfig cfg(argc - 1, argv + 1);
-    Conn conn = Conn::CreateFork(argv[0], cfg.user_argc, cfg.user_args);
+    Conn conn = Conn::CreateFork(argv[0], cfg.user_argc, cfg.user_args, cfg.debug);
     IWConnection iwc{fns, cfg, conn};
     return iwc.Run();
 }
