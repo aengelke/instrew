@@ -138,7 +138,7 @@ Conn Conn::CreateFork(char* argv0, size_t uargc, const char* const* uargv, const
 
     int memfd;
     if (debug) {
-        memfd = open("/home/hojan/桌面/instrew/build/server/instrew-client", O_RDONLY);
+        memfd = open("instrew-client", O_RDONLY);
         if (memfd < 0) {
             perror("open");
             std::exit(1);
