@@ -19,7 +19,8 @@
 #include <sys/mman.h>
 #include <sys/sendfile.h>
 #include <fcntl.h>
-
+#include <pwd.h>
+#include <cstring>
 
 namespace {
 
@@ -138,7 +139,10 @@ Conn Conn::CreateFork(char* argv0, size_t uargc, const char* const* uargv, const
 
     int memfd;
     if (debug) {
-        memfd = open("instrew-client", O_RDONLY);
+        char client_path[512];
+        readlink("/proc/self/exe", client_path, sizeof(client_path));
+        strcat(client_path, "-client");
+        memfd = open(client_path, O_RDONLY);
         if (memfd < 0) {
             perror("open");
             std::exit(1);
@@ -249,6 +253,8 @@ struct IWConnection {
     RemoteMemory remote_memory;
     instrew::Cache cache;
 
+    std::filesystem::path path;
+
     IWConnection(const struct IWFunctions* fns, InstrewConfig& cfg, Conn& conn)
             : fns(fns), cfg(cfg), conn(conn), remote_memory(conn) {}
 
@@ -258,7 +264,7 @@ private:
             return nullptr;
         std::stringstream debug_out1_name;
         debug_out1_name << std::hex << "func_" << addr << ".elf";
-        return std::fopen(debug_out1_name.str().c_str(), "wb");
+        return std::fopen((path / debug_out1_name.str()).c_str(), "wb");
     }
 
 public:
@@ -295,11 +301,25 @@ public:
             return 1;
         }
         iwsc = conn.Read<IWServerConfig>();
+
+        if (cfg.dumpobjdir != "") {
+            path = cfg.dumpobjdir ;
+        }
+        else {
+            passwd *pw = getpwuid(getuid());
+            path = pw->pw_dir;
+            path /= ".dumpobj";
+            path /= "instrew";
+        }
+        std::error_code ec;
+        if (std::filesystem::create_directories(path, ec) || ec)
+            return 1;
+
         // In mode 0, we need to respond with a client config.
         need_iwcc = iwsc.tsc_server_mode == 0;
 
         cache = instrew::Cache(cfg);
-
+        
         IWState* state = fns->init(this, cfg);
         if (need_iwcc)
             SendObject(0, "", 0, nullptr); // this will send the client config
