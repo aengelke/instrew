@@ -1,9 +1,3 @@
 /*.sublime-*
 /build*
 /install
-.vscode/settings.json
-build.sh
-test
-/hojan
-server/config.inc
-.gitignore
