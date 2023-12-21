@@ -7,9 +7,12 @@
 
 enum class CallConv {
     CDECL,
+#if LL_LLVM_MAJOR < 17
+    // LLVM 17 droped hhvmcc
     HHVM,
     RV64_X86_HHVM,
     AARCH64_X86_HHVM,
+#endif
     X86_AARCH64_X,
     AARCH64_AARCH64_X,
 };

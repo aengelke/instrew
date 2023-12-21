@@ -85,8 +85,10 @@ public:
 
         // Get pointer to CPU struct from arguments.
         unsigned sptr_idx = 0;
+#if LL_LLVM_MAJOR < 17
         if (fn->getCallingConv() == llvm::CallingConv::HHVM)
             sptr_idx = 1;
+#endif
         llvm::Value* sptr = &fn->arg_begin()[sptr_idx];
 
         // Construct pointer to "instruction counter" in entry block.

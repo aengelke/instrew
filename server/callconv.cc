@@ -20,12 +20,14 @@
 
 
 CallConv GetFastCC(int host_arch, int guest_arch) {
+#if LL_LLVM_MAJOR < 17
     if (host_arch == EM_X86_64 && guest_arch == EM_X86_64)
         return CallConv::HHVM;
     if (host_arch == EM_X86_64 && guest_arch == EM_RISCV)
         return CallConv::RV64_X86_HHVM;
     if (host_arch == EM_X86_64 && guest_arch == EM_AARCH64)
         return CallConv::AARCH64_X86_HHVM;
+#endif
     if (host_arch == EM_AARCH64 && guest_arch == EM_X86_64)
         return CallConv::X86_AARCH64_X;
     if (host_arch == EM_AARCH64 && guest_arch == EM_AARCH64)
@@ -36,9 +38,11 @@ CallConv GetFastCC(int host_arch, int guest_arch) {
 int GetCallConvClientNumber(CallConv cc) {
     switch (cc) {
     case CallConv::CDECL: return 0;
+#if LL_LLVM_MAJOR < 17
     case CallConv::HHVM: return 1;
     case CallConv::RV64_X86_HHVM: return 1;
     case CallConv::AARCH64_X86_HHVM: return 1;
+#endif
     case CallConv::X86_AARCH64_X: return 3;
     case CallConv::AARCH64_AARCH64_X: return 3;
     default: return 0;
@@ -334,6 +338,7 @@ struct CCState {
                 ret_val = irb.CreateInsertValue(ret_val, vals[i], {fields[i].retidx});
                 rv_set |= 1 << fields[i].retidx;
             }
+#if LL_LLVM_MAJOR < 17
             // This is an *EXTREMELY UGLY HACK* to work around some bugs in LLVM
             // when RBP is a parameter register. So first of all, we lowered the
             // stack alignment to 8, because HHVMCC functions cannot be called
@@ -368,6 +373,7 @@ struct CCState {
             // RBP is parameter (zero-indexed) 2 and return index 1.
             if (nfn->getCallingConv() == llvm::CallingConv::HHVM && !(rv_set & 2))
                 ret_val = irb.CreateInsertValue(ret_val, nfn->arg_begin() + 2, {1});
+#endif
             irb.CreateRet(ret_val);
         }
 
@@ -456,6 +462,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         fieldmap = &aapcsx_fieldmap;
         goto callconv_aapcsx_common;
     }
+#if LL_LLVM_MAJOR < 17
     case CallConv::HHVM: {
         static constexpr SptrField hhvm_fields[] = {
             { SptrFields::x86_64::RIP, 0,  0  },
@@ -547,6 +554,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         fieldmap = &hhvm_fieldmap;
         goto callconv_hhvm_common;
     }
+#endif
     case CallConv::CDECL:
     default:
         assert(false && "unsupported Instrew calling convention!");

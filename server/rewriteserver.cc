@@ -12,7 +12,7 @@
 
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/IR/GlobalValue.h>
-#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassTimingInfo.h>
@@ -249,7 +249,11 @@ public:
 #endif
 
         auto marker_fn = CreateMarkerFn(ctx);
+#if LL_LLVM_MAJOR < 17
         mod->getGlobalList().push_back(pc_base_var);
+#else
+        mod->insertGlobalVariable(pc_base_var);
+#endif
         for (const auto& helper_fn : helper_fns)
             mod->getFunctionList().push_back(helper_fn);
         mod->getFunctionList().push_back(marker_fn);
