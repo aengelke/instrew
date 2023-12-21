@@ -17,3 +17,4 @@ INSTREW_OPT(bool, cache, false)
 INSTREW_OPT(std::string, cachemode, "rw") // rw=read-write, r=read, w=write
 INSTREW_OPT(bool, cacheverbose, false)
 INSTREW_OPT(std::string, cachedir, "")
+INSTREW_OPT(std::string, stub, "") // defaults to embedded stub

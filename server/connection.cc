@@ -56,7 +56,8 @@ private:
             : file_rd(file_rd), file_wr(file_wr), recv_hdr{} {}
 
 public:
-    static Conn CreateFork(char* argv0, size_t uargc, const char* const* uargv);
+    static Conn CreateFork(const char* stub_path, char* argv0, size_t uargc,
+                           const char* const* uargv);
 
     Msg::Id RecvMsg() {
         assert(recv_hdr.sz == 0 && "unread message parts");
@@ -109,7 +110,8 @@ public:
     }
 };
 
-Conn Conn::CreateFork(char* argv0, size_t uargc, const char* const* uargv) {
+Conn Conn::CreateFork(const char* stub_path, char* argv0, size_t uargc,
+                      const char* const* uargv) {
     int pipes[4];
     int ret = pipe2(&pipes[0], 0);
     if (ret < 0) {
@@ -135,24 +137,27 @@ Conn Conn::CreateFork(char* argv0, size_t uargc, const char* const* uargv) {
         exec_args.push_back(uargv[i]);
     exec_args.push_back(nullptr);
 
-    static const unsigned char instrew_stub[] = {
-#include "client.inc"
-    };
+    int memfd = -1;
+    if (!stub_path) {
+        static const unsigned char instrew_stub[] = {
+    #include "client.inc"
+        };
 
-    int memfd = memfd_create("instrew_stub", MFD_CLOEXEC);
-    if (memfd < 0) {
-        perror("memfd_create");
-        std::exit(1);
-    }
-    size_t written = 0;
-    size_t total = sizeof(instrew_stub);
-    while (written < total) {
-        auto wres = write(memfd, instrew_stub + written, total - written);
-        if (wres < 0) {
-            perror("write");
+        memfd = memfd_create("instrew_stub", MFD_CLOEXEC);
+        if (memfd < 0) {
+            perror("memfd_create");
             std::exit(1);
         }
-        written += wres;
+        size_t written = 0;
+        size_t total = sizeof(instrew_stub);
+        while (written < total) {
+            auto wres = write(memfd, instrew_stub + written, total - written);
+            if (wres < 0) {
+                perror("write");
+                std::exit(1);
+            }
+            written += wres;
+        }
     }
 
     pid_t forkres = fork();
@@ -162,11 +167,15 @@ Conn Conn::CreateFork(char* argv0, size_t uargc, const char* const* uargv) {
     } else if (forkres > 0) {
         close(pipes[1]); // write-end of first pipe
         close(pipes[2]); // read-end of second pipe
-        fexecve(memfd, const_cast<char* const*>(&exec_args[0]), environ);
+        if (memfd >= 0)
+            fexecve(memfd, const_cast<char* const*>(&exec_args[0]), environ);
+        else
+            execve(stub_path, const_cast<char* const*>(&exec_args[0]), environ);
         perror("fexecve");
         std::exit(1);
     }
-    close(memfd);
+    if (memfd >= 0)
+        close(memfd);
     close(pipes[0]);
     close(pipes[3]);
 
@@ -330,7 +339,8 @@ void iw_sendobj(IWConnection* iwc, uintptr_t addr, const void* data,
 
 int iw_run_server(const struct IWFunctions* fns, int argc, char** argv) {
     InstrewConfig cfg(argc - 1, argv + 1);
-    Conn conn = Conn::CreateFork(argv[0], cfg.user_argc, cfg.user_args);
+    const char* stub = !cfg.stub.empty() ? cfg.stub.c_str() : nullptr;
+    Conn conn = Conn::CreateFork(stub, argv[0], cfg.user_argc, cfg.user_args);
     IWConnection iwc{fns, cfg, conn};
     return iwc.Run();
 }
