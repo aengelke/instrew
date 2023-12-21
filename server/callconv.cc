@@ -28,6 +28,12 @@ CallConv GetFastCC(int host_arch, int guest_arch) {
     if (host_arch == EM_X86_64 && guest_arch == EM_AARCH64)
         return CallConv::AARCH64_X86_HHVM;
 #endif
+    if (host_arch == EM_X86_64 && guest_arch == EM_X86_64)
+        return CallConv::X86_X86_REGCALL;
+    if (host_arch == EM_X86_64 && guest_arch == EM_RISCV)
+        return CallConv::RV64_X86_REGCALL;
+    if (host_arch == EM_X86_64 && guest_arch == EM_AARCH64)
+        return CallConv::AARCH64_X86_REGCALL;
     if (host_arch == EM_AARCH64 && guest_arch == EM_X86_64)
         return CallConv::X86_AARCH64_X;
     if (host_arch == EM_AARCH64 && guest_arch == EM_AARCH64)
@@ -43,6 +49,9 @@ int GetCallConvClientNumber(CallConv cc) {
     case CallConv::RV64_X86_HHVM: return 1;
     case CallConv::AARCH64_X86_HHVM: return 1;
 #endif
+    case CallConv::X86_X86_REGCALL: return 2;
+    case CallConv::RV64_X86_REGCALL: return 2;
+    case CallConv::AARCH64_X86_REGCALL: return 2;
     case CallConv::X86_AARCH64_X: return 3;
     case CallConv::AARCH64_AARCH64_X: return 3;
     default: return 0;
@@ -461,6 +470,85 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         fields = aapcsx_fields;
         fieldmap = &aapcsx_fieldmap;
         goto callconv_aapcsx_common;
+    }
+    case CallConv::X86_X86_REGCALL: {
+        static constexpr SptrField regcall_fields[] = {
+            { SptrFields::x86_64::RIP,  1,  1  },
+            { SptrFields::x86_64::RAX,  2,  2  },
+            { SptrFields::x86_64::RCX,  3,  3  },
+            { SptrFields::x86_64::RDX,  4,  4  },
+            { SptrFields::x86_64::RBX,  5,  5  },
+            { SptrFields::x86_64::RSP,  6,  6  },
+            { SptrFields::x86_64::RSI,  7,  7  },
+            { SptrFields::x86_64::RDI,  8,  8  },
+            { SptrFields::x86_64::R8,   9,  9  },
+            { SptrFields::x86_64::R9,  10, 10  },
+        };
+        static const constexpr SptrFieldMap regcall_fieldmap = CreateSptrMap(regcall_fields);
+        fields = regcall_fields;
+        fieldmap = &regcall_fieldmap;
+    callconv_regcall_common:
+        ret_ty = llvm::StructType::get(sptr_ty, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64);
+        fn_ty = llvm::FunctionType::get(ret_ty,
+                {sptr_ty, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64}, false);
+        sptr_ret_idx = 0;
+
+        nfn = llvm::Function::Create(fn_ty, linkage, fn->getName() + "_regcall", mod);
+        nfn->copyAttributesFrom(fn);
+        llvm::AttributeList al = nfn->getAttributes();
+#if LL_LLVM_MAJOR < 14
+        al = al.addParamAttributes(ctx, 0, al.getParamAttributes(0));
+#else
+        llvm::AttrBuilder ab(ctx, al.getParamAttrs(0));
+        al = al.addParamAttributes(ctx, 0, ab);
+#endif
+        nfn->setAttributes(al.removeParamAttributes(ctx, 0));
+        nfn->setCallingConv(llvm::CallingConv::X86_RegCall);
+        sptr = &nfn->arg_begin()[0];
+
+        if (call_fn_cdecl) {
+            tail_fn = llvm::cast<llvm::Function>(mod->getOrInsertFunction("instrew_quick_dispatch", fn_ty).getCallee());
+            tail_fn->copyAttributesFrom(nfn);
+            tail_fn->setDSOLocal(true);
+            call_fn = tail_fn;
+        }
+        break;
+    }
+    case CallConv::AARCH64_X86_REGCALL: {
+        static constexpr SptrField regcall_fields[] = {
+            { SptrFields::aarch64::PC,  1,  1  },
+            { SptrFields::aarch64::X0,  2,  2  },
+            { SptrFields::aarch64::X1,  3,  3  },
+            { SptrFields::aarch64::X2,  4,  4  },
+            { SptrFields::aarch64::X3,  5,  5  },
+            { SptrFields::aarch64::X4,  6,  6  },
+            { SptrFields::aarch64::X30, 7,  7  },
+            { SptrFields::aarch64::X6,  8,  8  },
+            { SptrFields::aarch64::X7,  9,  9  },
+            { SptrFields::aarch64::X8, 10, 10  }, // TODO: map SP
+        };
+        static const constexpr SptrFieldMap regcall_fieldmap = CreateSptrMap(regcall_fields);
+        fields = regcall_fields;
+        fieldmap = &regcall_fieldmap;
+        goto callconv_regcall_common;
+    }
+    case CallConv::RV64_X86_REGCALL: {
+        static constexpr SptrField regcall_fields[] = {
+            { SptrFields::rv64::RIP,  1,  1 },
+            { SptrFields::rv64::X18,  2,  2 },
+            { SptrFields::rv64::X1,   3,  3 },
+            { SptrFields::rv64::X2,   4,  4 }, // sp; has to be at this index due to initialization
+            { SptrFields::rv64::X8,   5,  5 },
+            { SptrFields::rv64::X9,   6,  6 },
+            { SptrFields::rv64::X10,  7,  7 },
+            { SptrFields::rv64::X11,  8,  8 },
+            { SptrFields::rv64::X12,  9,  9 },
+            { SptrFields::rv64::X13, 10, 10 },
+        };
+        static const constexpr SptrFieldMap regcall_fieldmap = CreateSptrMap(regcall_fields);
+        fields = regcall_fields;
+        fieldmap = &regcall_fieldmap;
+        goto callconv_regcall_common;
     }
 #if LL_LLVM_MAJOR < 17
     case CallConv::HHVM: {

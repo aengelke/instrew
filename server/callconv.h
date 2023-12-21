@@ -13,6 +13,9 @@ enum class CallConv {
     RV64_X86_HHVM,
     AARCH64_X86_HHVM,
 #endif
+    X86_X86_REGCALL,
+    RV64_X86_REGCALL,
+    AARCH64_X86_REGCALL,
     X86_AARCH64_X,
     AARCH64_AARCH64_X,
 };
