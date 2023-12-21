@@ -2,7 +2,7 @@ image: debian/sid
 arch: amd64
 packages:
   - meson
-  - llvm-13-dev
+  - llvm-17-dev
   - libssl-dev
   - pkg-config
   - clang
