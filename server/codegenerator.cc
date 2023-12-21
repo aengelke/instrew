@@ -98,6 +98,7 @@ public:
     }
 
     void GenerateCode(llvm::Module* mod) {
+        mod->setDataLayout(target->createDataLayout());
         obj_buffer.clear();
         mc_pass_manager.run(*mod);
     }

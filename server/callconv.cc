@@ -564,7 +564,11 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
             bbs.push_back(&bb);
         for (llvm::BasicBlock* bb : bbs) {
             bb->removeFromParent();
+#if LL_LLVM_MAJOR < 16
             nfn->getBasicBlockList().push_back(bb);
+#else
+            nfn->insert(nfn->end(), bb);
+#endif
         }
     }
     fn->arg_begin()[0].replaceAllUsesWith(sptr);
@@ -586,7 +590,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         for (size_t i = 0; i < callret_calls.size(); i++) {
             llvm::CallInst* call = callret_calls[i];
             auto tgt = call->isMustTailCall() ? tail_fn : call_fn;
-            auto newcall = llvm::CallInst::Create(fn_ty, tgt, "", call);
+            auto newcall = llvm::CallInst::Create(fn_ty, tgt, {}, "", call);
             newcall->setTailCallKind(call->getTailCallKind());
             newcall->setCallingConv(tgt->getCallingConv());
             newcall->setAttributes(tgt->getAttributes());

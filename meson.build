@@ -29,7 +29,7 @@ add_project_arguments(['-Wmissing-field-initializers',
 
 add_global_arguments(['-fno-rtti', '-fno-exceptions'], language: 'cpp')
 
-llvm_version = ['>=12', '<16']
+llvm_version = ['>=12', '<17']
 # First, attempt to use the shared library.
 libllvm = dependency('llvm', version: llvm_version, static: false,
                      method: 'config-tool', include_type: 'system',
