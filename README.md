@@ -1,6 +1,6 @@
 # Instrew — LLVM-based Dynamic Binary Instrumentation
 
-[![builds.sr.ht status](https://builds.sr.ht/~aengelke/instrew.svg)](https://builds.sr.ht/~aengelke/instrew?)
+[![builds.sr.ht status](https://builds.sr.ht/~aengelke/instrew/commits/master.svg)](https://builds.sr.ht/~aengelke/instrew/commits/master?)
 
 Instrew is a performance-targeted transparent dynamic binary translator/instrumenter based on LLVM. Currently supported source/guest architectures are x86-64, AArch64, and RISC-V64 (rv64imafdc); supported host architectures are x86-64 and AArch64. The original code is lifted to LLVM-IR using [Rellume](https://github.com/aengelke/rellume), where it can be modified and from which new machine code is generated using LLVM's JIT compiler.
 
