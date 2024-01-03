@@ -93,8 +93,25 @@ mem_write_code(void* dst, const void* src, size_t size) {
 #if defined(__x86_64__)
     // Do nothing; x86-64 flushes ICache automatically.
 #elif defined(__aarch64__)
-    for (size_t off = 0; off < size; off += 16)
-        __asm__ volatile("ic ivau, %0" : : "r"((uint8_t*) dst + off));
+    uintptr_t dstu = (uintptr_t) dst;
+    // Procedure from AArch64 Manual, B2.4.4
+    uint64_t ctr_el0 = 0;
+    __asm__("mrs %0, ctr_el0" : "=r"(ctr_el0));
+    // Encoding of cache line sizes is log2(#words), one word is 4 bytes.
+    size_t dc_line_sz = 4 << ((ctr_el0 >> 16) & 0xf); // DCache min line size
+    size_t ic_line_sz = 4 << ((ctr_el0 >> 0) & 0xf); // ICache min line size
+
+    if (!(ctr_el0 & (1 << 28))) { // IDC == 0 => DC invalidation required
+        for (uintptr_t p = dstu & ~dc_line_sz; p < dstu + size; p += dc_line_sz)
+            __asm__ volatile("dc cvau, %0" : : "r"(p));
+        __asm__ volatile("dsb ish");
+    }
+    if (!(ctr_el0 & (1 << 29))) { // DIC == 0 => IC invalidation required
+        for (uintptr_t p = dstu & ~ic_line_sz; p < dstu + size; p += ic_line_sz)
+            __asm__ volatile("ic ivau, %0" : : "r"(p));
+        __asm__ volatile("dsb ish");
+    }
+    __asm__ volatile("isb");
 #else
 #error "Implement ICache flush for unknown target"
 #endif
