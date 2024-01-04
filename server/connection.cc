@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <sys/mman.h>
 #include <sys/sendfile.h>
+#include <sys/socket.h>
 
 
 namespace {
@@ -112,19 +113,14 @@ public:
 
 Conn Conn::CreateFork(const char* stub_path, char* argv0, size_t uargc,
                       const char* const* uargv) {
-    int pipes[4];
-    int ret = pipe2(&pipes[0], 0);
+    int fds[2];
+    int ret = socketpair(AF_UNIX, SOCK_STREAM, 0, &fds[0]);
     if (ret < 0) {
-        perror("pipe2");
-        std::exit(1);
-    }
-    ret = pipe2(&pipes[2], 0);
-    if (ret < 0) {
-        perror("pipe2");
+        perror("socketpair");
         std::exit(1);
     }
 
-    uint64_t raw_fds = (uint64_t) pipes[0] | (uint64_t) pipes[3] << 32;
+    uint64_t raw_fds = (uint64_t) fds[1] | (uint64_t) fds[1] << 32;
     std::string client_config = "";
     for (; raw_fds; raw_fds >>= 3)
         client_config.append(1, '0' + (raw_fds&7));
@@ -165,8 +161,7 @@ Conn Conn::CreateFork(const char* stub_path, char* argv0, size_t uargc,
         perror("fork");
         std::exit(1);
     } else if (forkres > 0) {
-        close(pipes[1]); // write-end of first pipe
-        close(pipes[2]); // read-end of second pipe
+        close(fds[0]);
         if (memfd >= 0)
             fexecve(memfd, const_cast<char* const*>(&exec_args[0]), environ);
         else
@@ -176,10 +171,10 @@ Conn Conn::CreateFork(const char* stub_path, char* argv0, size_t uargc,
     }
     if (memfd >= 0)
         close(memfd);
-    close(pipes[0]);
-    close(pipes[3]);
+    close(fds[1]);
 
-    return Conn(fdopen(pipes[2], "rb"), fdopen(pipes[1], "wb"));
+    std::FILE* file = fdopen(fds[0], "rb+");
+    return Conn(file, file);
 }
 
 class RemoteMemory {
