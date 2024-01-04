@@ -21,8 +21,7 @@ struct TranslatorMsgHdr {
 };
 
 struct Translator {
-    int rd_fd;
-    int wr_fd;
+    int socket;
 
     size_t written_bytes;
     TranslatorMsgHdr last_hdr;

@@ -21,14 +21,14 @@ static int translator_hdr_send(Translator* t, uint32_t id, int32_t sz) {
         return -EPROTO;
     int ret;
     TranslatorMsgHdr hdr = {id, sz};
-    if ((ret = write_full(t->wr_fd, &hdr, sizeof(hdr))) != sizeof(hdr))
+    if ((ret = write_full(t->socket, &hdr, sizeof(hdr))) != sizeof(hdr))
         return ret;
     return 0;
 }
 
 static int32_t translator_hdr_recv(Translator* t, uint32_t id) {
     if (t->last_hdr.id == MSGID_UNKNOWN) {
-        int ret = read_full(t->rd_fd, &t->last_hdr, sizeof(t->last_hdr));
+        int ret = read_full(t->socket, &t->last_hdr, sizeof(t->last_hdr));
         if (ret != sizeof(t->last_hdr))
             return ret;
     }
@@ -41,11 +41,10 @@ static int32_t translator_hdr_recv(Translator* t, uint32_t id) {
 
 int translator_init(Translator* t, const char* server_config,
                     const struct TranslatorServerConfig* tsc) {
-    uint64_t fds_raw = 0;
+    int socket = 0;
     for (size_t i = 0; server_config[i]; i++)
-        fds_raw |= (uint64_t) ((server_config[i] - '0') & 7) << ((3 * i) & 63);
-    t->rd_fd = fds_raw & 0xffffffff;
-    t->wr_fd = fds_raw >> 32;
+        socket = socket * 10 + server_config[i] - '0';
+    t->socket = socket;
 
     t->written_bytes = 0;
     t->last_hdr = (TranslatorMsgHdr) {MSGID_UNKNOWN, 0};
@@ -55,15 +54,14 @@ int translator_init(Translator* t, const char* server_config,
     int ret;
     if ((ret = translator_hdr_send(t, MSGID_C_INIT, sizeof *tsc)))
         return ret;
-    if ((ret = write_full(t->wr_fd, tsc, sizeof *tsc)) != sizeof *tsc)
+    if ((ret = write_full(t->socket, tsc, sizeof *tsc)) != sizeof *tsc)
         return ret;
 
     return 0;
 }
 
 int translator_fini(Translator* t) {
-    close(t->rd_fd);
-    close(t->wr_fd);
+    close(t->socket);
     return 0;
 }
 
@@ -73,7 +71,7 @@ int translator_config_fetch(Translator* t, struct TranslatorConfig* cfg) {
         return sz;
     if (sz != sizeof *cfg)
         return -EPROTO;
-    ssize_t ret = read_full(t->rd_fd, cfg, sz);
+    ssize_t ret = read_full(t->socket, cfg, sz);
     if (ret != (ssize_t) sz)
         return ret;
     return 0;
@@ -95,7 +93,7 @@ int translator_get_object(Translator* t, void** out_obj, size_t* out_obj_size) {
             return (int) (uintptr_t) t->recvbuf;
         t->recvbuf_sz = newsz;
     }
-    int ret = read_full(t->rd_fd, t->recvbuf, sz);
+    int ret = read_full(t->socket, t->recvbuf, sz);
     if (ret != (ssize_t) sz)
         return ret;
 
@@ -110,7 +108,7 @@ int translator_get(Translator* t, uintptr_t addr, void** out_obj,
     int ret;
     if ((ret = translator_hdr_send(t, MSGID_C_TRANSLATE, 8)) != 0)
         return ret;
-    if ((ret = write_full(t->wr_fd, &addr, sizeof(addr))) != sizeof(addr))
+    if ((ret = write_full(t->socket, &addr, sizeof(addr))) != sizeof(addr))
         return ret;
 
     while (true) {
@@ -125,7 +123,7 @@ int translator_get(Translator* t, uintptr_t addr, void** out_obj,
         struct { uint64_t addr; size_t buf_sz; } memrq;
         if (sz != sizeof(memrq))
             return -1;
-        if ((ret = read_full(t->rd_fd, &memrq, sizeof(memrq))) != sizeof(memrq))
+        if ((ret = read_full(t->socket, &memrq, sizeof(memrq))) != sizeof(memrq))
             return ret;
         if (memrq.buf_sz > 0x1000)
             memrq.buf_sz = 0x1000;
@@ -134,13 +132,13 @@ int translator_get(Translator* t, uintptr_t addr, void** out_obj,
             return ret;
 
         uint8_t failed = 0;
-        if ((ret = write_full(t->wr_fd, (void*) memrq.addr, memrq.buf_sz)) != (ssize_t) memrq.buf_sz) {
+        if ((ret = write_full(t->socket, (void*) memrq.addr, memrq.buf_sz)) != (ssize_t) memrq.buf_sz) {
             // Gracefully handle reads from invalid addresses
             if (ret == -EFAULT) {
                 failed = 1;
                 // Send zero bytes as padding
                 for (size_t i = 0; i < memrq.buf_sz; i++)
-                    if (write_full(t->wr_fd, "", 1) != 1)
+                    if (write_full(t->socket, "", 1) != 1)
                         return ret;
             } else {
                 dprintf(2, "translator_get: failed writing from address 0x%lx\n", memrq.addr);
@@ -148,7 +146,7 @@ int translator_get(Translator* t, uintptr_t addr, void** out_obj,
             }
         }
 
-        if ((ret = write_full(t->wr_fd, &failed, 1)) != 1)
+        if ((ret = write_full(t->socket, &failed, 1)) != 1)
             return ret;
 
         t->written_bytes += memrq.buf_sz;

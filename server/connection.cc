@@ -120,10 +120,7 @@ Conn Conn::CreateFork(const char* stub_path, char* argv0, size_t uargc,
         std::exit(1);
     }
 
-    uint64_t raw_fds = (uint64_t) fds[1] | (uint64_t) fds[1] << 32;
-    std::string client_config = "";
-    for (; raw_fds; raw_fds >>= 3)
-        client_config.append(1, '0' + (raw_fds&7));
+    std::string client_config = std::to_string(fds[1]);
 
     std::vector<const char*> exec_args;
     exec_args.reserve(uargc + 3);
