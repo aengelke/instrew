@@ -337,6 +337,8 @@ emulate_syscall(uint64_t* cpu_regs) {
     case 41: nr = __NR_socket; goto native;
     case 42: nr = __NR_connect; goto native;
     // case 58: nr = __NR_fork; goto native; // Treat vfork as fork.
+    case 59: nr = __NR_execve; goto native; // TODO: maybe check executable arch
+    case 61: nr = __NR_wait4; goto native;
     case 63: nr = __NR_uname; goto native;
     case 76: nr = __NR_truncate; goto native;
     case 77: nr = __NR_ftruncate; goto native;
@@ -352,8 +354,10 @@ emulate_syscall(uint64_t* cpu_regs) {
     case 104: nr = __NR_getgid; goto native;
     case 107: nr = __NR_geteuid; goto native;
     case 108: nr = __NR_getegid; goto native;
+    case 110: nr = __NR_getppid; goto native;
     case 115: nr = __NR_getgroups; goto native;
     case 116: nr = __NR_setgroups; goto native;
+    case 121: nr = __NR_getpgid; goto native;
     case 137: nr = __NR_statfs; goto native; // FIXME: handle buffer argument
     case 161: nr = __NR_chroot; goto native;
     case 186: nr = __NR_gettid; goto native;
@@ -418,6 +422,9 @@ emulate_syscall(uint64_t* cpu_regs) {
     case 94: // lchown
         res = syscall(__NR_fchownat, AT_FDCWD, arg0, arg1, arg2,
                       AT_SYMLINK_NOFOLLOW, 0);
+        break;
+    case 111: // getpgrp
+        res = syscall(__NR_getpgid, 0, 0, 0, 0, 0, 0);
         break;
 
     // And some syscalls need special handling, e.g. to different structs.
@@ -730,6 +737,7 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
     case 93: nr = __NR_exit; goto native;
     case 94: nr = __NR_exit_group; goto native;
     case 96: nr = __NR_set_tid_address; goto native;
+    case 98: nr = __NR_futex; goto native;
     case 99: nr = __NR_set_robust_list; goto native;
     case 100: nr = __NR_get_robust_list; goto native;
     case 113: nr = __NR_clock_gettime; goto native;
@@ -737,6 +745,7 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
     case 115: nr = __NR_clock_nanosleep; goto native;
     case 124: nr = __NR_sched_yield; goto native;
     case 131: nr = __NR_tgkill; goto native;
+    case 155: nr = __NR_getpgid; goto native;
     case 160:
         res = syscall(__NR_uname, arg0, 0, 0, 0, 0, 0);
         if (res == 0) {
@@ -758,6 +767,7 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
     case 214: nr = __NR_brk; goto native;
     case 215: nr = __NR_munmap; goto native;
     case 216: nr = __NR_mremap; goto native;
+    case 221: nr = __NR_execve; goto native; // TODO: maybe check executable arch
     case 222: nr = __NR_mmap; goto native;
     case 223: nr = __NR_fadvise64; goto native;
     case 226: nr = __NR_mprotect; goto native;
