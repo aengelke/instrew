@@ -22,6 +22,8 @@ _Static_assert(SIGUSR1 == 10, "SIGUSR10 mismtach");
 
 static _Noreturn void
 abort_with_signal(int sig) {
+    if (sig == SIGCHLD || sig == SIGURG || sig == SIGWINCH)
+        sig = SIGABRT;
     struct sigaction act;
     act.sa_handler = SIG_DFL;
     act.sa_flags = 0;
