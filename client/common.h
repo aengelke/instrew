@@ -12,6 +12,7 @@
 #include <linux/fcntl.h>
 #include <linux/posix_types.h>
 #include <linux/time.h>
+#include <linux/uio.h>
 #include <linux/unistd.h>
 
 #ifndef __has_attribute
@@ -27,6 +28,16 @@
 typedef __kernel_ssize_t ssize_t;
 typedef __kernel_off_t off_t;
 typedef __kernel_pid_t pid_t;
+
+struct msghdr {
+    void* msg_name;
+    int msg_namelen;
+    struct iovec* msg_iov;
+    size_t msg_iovlen;
+    void* msg_control;
+    size_t msg_controllen;
+    unsigned msg_flags;
+};
 
 extern char **environ;
 
@@ -49,6 +60,10 @@ off_t lseek(int fd, off_t offset, int whence);
 ssize_t read(int fd, void* buf, size_t count);
 ssize_t write(int fd, const void* buf, size_t count);
 int close(int fd);
+
+#define SCM_RIGHTS 0x1
+#define MSG_CMSG_CLOEXEC 0x40000000
+ssize_t recvmsg(int fd, struct msghdr* msg, int flags);
 
 ssize_t read_full(int fd, void* buf, size_t nbytes);
 ssize_t write_full(int fd, const void* buf, size_t nbytes);

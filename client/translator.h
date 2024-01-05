@@ -50,4 +50,9 @@ struct TranslatorConfig {
 
 int translator_config_fetch(Translator* t, struct TranslatorConfig* cfg);
 
+// Fork server process and return new socket fd.
+int translator_fork_prepare(Translator* t);
+// Client fork succeeded, use forked translator from now on.
+int translator_fork_finalize(Translator* t, int fork_fd);
+
 #endif

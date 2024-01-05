@@ -320,6 +320,10 @@ int close(int fd) {
     return syscall1(__NR_close, fd);
 }
 
+ssize_t recvmsg(int fd, struct msghdr* msg, int flags) {
+    return syscall3(__NR_recvmsg, fd, (size_t) msg, flags);
+}
+
 ssize_t read_full(int fd, void* buf, size_t nbytes) {
     size_t total_read = 0;
     uint8_t* buf_cp = buf;

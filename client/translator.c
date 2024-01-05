@@ -152,3 +152,45 @@ int translator_get(Translator* t, uintptr_t addr, void** out_obj,
         t->written_bytes += memrq.buf_sz;
     }
 }
+
+int
+translator_fork_prepare(Translator* t) {
+    int ret;
+    if ((ret = translator_hdr_send(t, MSGID_C_FORK, 0)))
+        return ret;
+
+    int32_t sz = translator_hdr_recv(t, MSGID_S_FD);
+    if (sz != 4)
+        return sz < 0 ? sz : -EPROTO;
+
+    int error;
+    struct iovec iov = {&error, sizeof(error)};
+    struct fd_cmsg {
+        size_t cmsg_len;
+        int cmsg_level;
+        int cmsg_type;
+        int fd;
+    } cmsg;
+    size_t cmsg_len = offsetof(struct fd_cmsg, fd) + sizeof(int);
+    struct msghdr msg = {
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+        .msg_control = &cmsg,
+        .msg_controllen = cmsg_len,
+    };
+    if ((ret = recvmsg(t->socket, &msg, MSG_CMSG_CLOEXEC)) != sizeof(error))
+        return ret < 0 ? ret : -EPROTO;
+    if (error != 0)
+        return error;
+    if (cmsg.cmsg_type != SCM_RIGHTS || cmsg.cmsg_len != cmsg_len)
+        return -EPROTO;
+
+    return cmsg.fd;
+}
+
+int
+translator_fork_finalize(Translator* t, int fork_fd) {
+    close(t->socket); // Forked process should not use parent translator.
+    t->socket = fork_fd;
+    return 0;
+}

@@ -12,6 +12,7 @@
 #include <linux/utsname.h>
 
 #include <state.h>
+#include <translator.h>
 
 
 // SIG_DFL should be zero, so zero-initializing sigact is sufficient
@@ -191,6 +192,80 @@ signal_init(struct State* state) {
     sigfillset(&act.sa_mask);
     sigaction(SIGSEGV, &act, NULL);
     sigaction(SIGBUS, &act, NULL);
+}
+
+static int
+handle_clone(struct State* state, struct clone_args* uargs, size_t usize) {
+    struct clone_args args = {0};
+    if (usize <= sizeof(args)) {
+        memcpy(&args, uargs, usize);
+    } else {
+        // TODO: accept if excess arguments are all-zero.
+        return -E2BIG;
+    }
+
+    if (args.flags & CLONE_VM) {
+        static bool warned_clone_vm = false;
+        if (!warned_clone_vm) {
+            dprintf(2, "unhandled syscall clone(CLONE_VM|..., ...) = -EOPNOTSUPP"
+                    " -- multi-threading is currently not implemented\n");
+            warned_clone_vm = true;
+        }
+        return -EOPNOTSUPP;
+    }
+
+    // Flags used by fork().
+    uint64_t supp_flags = CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID;
+    if (args.flags & ~supp_flags) {
+        dprintf(2, "unhandled syscall clone(%lx, ...) = -EINVAL"
+                " -- unsupported clone flags, please file a bug\n", args.flags);
+        return -EINVAL;
+    }
+
+    if (args.stack || args.stack_size) {
+        dprintf(2, "unhandled syscall clone(stack != NULL, ...) = -EINVAL"
+                " -- fork with stack unsupported, please file a bug\n");
+        return -EINVAL;
+    }
+
+    // Ensure that we can pass the exit_signal as flag to clone().
+    if (args.exit_signal & ~(uint64_t) CSIGNAL)
+        return -EINVAL;
+
+    uint64_t flags = args.flags | args.exit_signal;
+
+    // Ok, everything good so far, we will attempt the clone.
+    int forked_translator = translator_fork_prepare(&state->translator);
+    if (forked_translator < 0)
+        return forked_translator;
+
+    // Signature depends on architecture.
+#if defined(__x86_64__)
+    // clone(flags, stack, parent_tid, child_tid, tls)
+    ssize_t res = syscall(__NR_clone, flags, 0, args.parent_tid, args.child_tid,
+                          args.tls, 0);
+#elif defined(__aarch64__)
+    // clone(flags, stack, parent_tid, tls, child_tid)
+    ssize_t res = syscall(__NR_clone, flags, 0, args.parent_tid, args.tls,
+                          args.child_tid, 0);
+#else
+#error "clone not implemented for target"
+#endif
+
+    if (res < 0) {
+        close(forked_translator);
+        return res;
+    }
+
+    if (res == 0) {
+        // Child: use forked translator
+        translator_fork_finalize(&state->translator, forked_translator);
+    } else {
+        // Parent: close socket for child translator
+        close(forked_translator);
+    }
+
+    return res;
 }
 
 #ifdef __aarch64__
@@ -504,7 +579,26 @@ emulate_syscall(uint64_t* cpu_regs) {
     case 34: // pause (wait for signal)
         res = syscall(__NR_ppoll, 0, 0, 0, 0, 0, 0);
         break;
-
+    case 56: { // clone
+        struct clone_args args = {
+            .flags = arg0 & ~0xfful,
+            .child_tid = arg3,
+            .parent_tid = arg2,
+            .exit_signal = arg0 & 0xff,
+            .stack = arg1,
+            .tls = arg4,
+        };
+        if (arg0 & CLONE_PIDFD) {
+            if (arg0 & CLONE_PARENT_SETTID) {
+                res = -EINVAL;
+                break;
+            }
+            args.pidfd = args.parent_tid;
+            args.parent_tid = 0;
+        }
+        res = handle_clone(state, &args, sizeof(args));
+        break;
+    }
     case 72: // fcntl
         switch (arg0) {
         case F_DUPFD:
@@ -767,6 +861,26 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
     case 214: nr = __NR_brk; goto native;
     case 215: nr = __NR_munmap; goto native;
     case 216: nr = __NR_mremap; goto native;
+    case 220: { // clone
+        struct clone_args args = {
+            .flags = arg0 & ~0xfful,
+            .child_tid = arg4,
+            .parent_tid = arg2,
+            .exit_signal = arg0 & 0xff,
+            .stack = arg1,
+            .tls = arg3,
+        };
+        if (arg0 & CLONE_PIDFD) {
+            if (arg0 & CLONE_PARENT_SETTID) {
+                res = -EINVAL;
+                break;
+            }
+            args.pidfd = args.parent_tid;
+            args.parent_tid = 0;
+        }
+        res = handle_clone(cpu_state->state, &args, sizeof(args));
+        break;
+    }
     case 221: nr = __NR_execve; goto native; // TODO: maybe check executable arch
     case 222: nr = __NR_mmap; goto native;
     case 223: nr = __NR_fadvise64; goto native;

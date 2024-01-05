@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -61,6 +62,12 @@ public:
         fclose(file);
     }
 
+    Conn& operator=(Conn&& x) {
+        if (this != &x)
+            std::swap(file, x.file);
+        return *this;
+    }
+
     Msg::Id RecvMsg() {
         assert(recv_hdr.sz == 0 && "unread message parts");
         if (!std::fread(&recv_hdr, sizeof(recv_hdr), 1, file))
@@ -109,6 +116,33 @@ public:
     void SendMsg(Msg::Id id, const T& val) {
         SendMsgHdr(id, sizeof(T));
         Write(&val, sizeof(T));
+    }
+
+    template<typename T>
+    void SendMsgWithFd(Msg::Id id, const T& val, int sendfd) {
+        SendMsgHdr(id, sizeof(T));
+        std::fflush(file);
+
+        alignas(alignof(struct cmsghdr)) char cmsgbuf[CMSG_SPACE(sizeof(int))];
+        struct msghdr msg{};
+        void* vptr = reinterpret_cast<void*>(const_cast<T*>(&val));
+        struct iovec msgiov = {vptr, sizeof(T)};
+        msg.msg_iov = &msgiov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = &cmsgbuf;
+        msg.msg_controllen = sizeof(cmsgbuf);
+
+        struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_RIGHTS;
+        cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+        std::memcpy(CMSG_DATA(cmsg), &sendfd, sizeof(int));
+
+        ssize_t ret = sendmsg(fileno(file), &msg, 0);
+        if (ret != sizeof(T)) {
+            perror("sendmsg");
+            assert(false && "unable to send socket fd");
+        }
     }
 };
 
@@ -303,6 +337,29 @@ public:
             } else if (msgid == Msg::C_TRANSLATE) {
                 auto addr = conn.Read<uint64_t>();
                 fns->translate(state, addr);
+            } else if (msgid == Msg::C_FORK) {
+                int child_fds[2];
+                int ret = socketpair(AF_UNIX, SOCK_STREAM, 0, &child_fds[0]);
+                if (ret < 0) {
+                    int err = errno;
+                    perror("socketpair");
+                    conn.SendMsg(Msg::S_FD, -err);
+                    continue;
+                }
+
+                pid_t pid = fork();
+                if (pid < 0) {
+                    conn.SendMsg(Msg::S_FD, -errno);
+                    close(child_fds[0]);
+                    close(child_fds[1]);
+                } else if (pid == 0) {
+                    conn = child_fds[0];
+                    close(child_fds[1]);
+                } else {
+                    conn.SendMsgWithFd(Msg::S_FD, 0, child_fds[1]);
+                    close(child_fds[0]);
+                    close(child_fds[1]);
+                }
             } else {
                 std::cerr << "unexpected msg " << msgid << std::endl;
                 return 1;
