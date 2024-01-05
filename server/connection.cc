@@ -48,21 +48,22 @@ namespace Msg {
 
 class Conn {
 private:
-    std::FILE* file_rd;
-    std::FILE* file_wr;
+    std::FILE* file;
     Msg::Hdr wr_hdr;
     Msg::Hdr recv_hdr;
 
-    Conn(std::FILE* file_rd, std::FILE* file_wr)
-            : file_rd(file_rd), file_wr(file_wr), recv_hdr{} {}
+    Conn(const Conn&) = delete;
+    void operator=(const Conn& x) = delete;
 
 public:
-    static Conn CreateFork(const char* stub_path, char* argv0, size_t uargc,
-                           const char* const* uargv);
+    Conn(int fd) : file(fdopen(fd, "rb+")), recv_hdr{} {}
+    ~Conn() {
+        fclose(file);
+    }
 
     Msg::Id RecvMsg() {
         assert(recv_hdr.sz == 0 && "unread message parts");
-        if (!std::fread(&recv_hdr, sizeof(recv_hdr), 1, file_rd))
+        if (!std::fread(&recv_hdr, sizeof(recv_hdr), 1, file))
             return Msg::C_EXIT; // probably EOF
         return static_cast<Msg::Id>(recv_hdr.id);
     }
@@ -70,7 +71,7 @@ public:
     void Read(void* buf, size_t size) {
         if (static_cast<size_t>(recv_hdr.sz) < size)
             assert(false && "message too small");
-        if (!std::fread(buf, size, 1, file_rd))
+        if (!std::fread(buf, size, 1, file))
             assert(false && "unable to read msg content");
         recv_hdr.sz -= size;
     }
@@ -84,20 +85,20 @@ public:
     void SendMsgHdr(Msg::Id id, size_t size) {
         assert(size <= INT32_MAX);
         wr_hdr = Msg::Hdr{ id, static_cast<int32_t>(size) };
-        if (!std::fwrite(&wr_hdr, sizeof(wr_hdr), 1, file_wr))
+        if (!std::fwrite(&wr_hdr, sizeof(wr_hdr), 1, file))
             assert(false && "unable to write msg hdr");
     }
     void Write(const void* buf, size_t size) {
-        if (size > 0 && !std::fwrite(buf, size, 1, file_wr))
+        if (size > 0 && !std::fwrite(buf, size, 1, file))
             assert(false && "unable to write msg content");
         wr_hdr.sz -= size;
         if (wr_hdr.sz == 0)
-            std::fflush(file_wr);
+            std::fflush(file);
     }
     void Sendfile(int fd, size_t size) {
-        std::fflush(file_wr);
+        std::fflush(file);
         while (size) {
-            ssize_t cnt = sendfile(fileno(file_wr), fd, nullptr, size);
+            ssize_t cnt = sendfile(fileno(file), fd, nullptr, size);
             if (cnt < 0)
                 assert(false && "unable to write msg content (sendfile)");
             size -= cnt;
@@ -111,8 +112,8 @@ public:
     }
 };
 
-Conn Conn::CreateFork(const char* stub_path, char* argv0, size_t uargc,
-                      const char* const* uargv) {
+int CreateChild(const char* stub_path, char* argv0, size_t uargc,
+                const char* const* uargv) {
     int fds[2];
     int ret = socketpair(AF_UNIX, SOCK_STREAM, 0, &fds[0]);
     if (ret < 0) {
@@ -169,9 +170,7 @@ Conn Conn::CreateFork(const char* stub_path, char* argv0, size_t uargc,
     if (memfd >= 0)
         close(memfd);
     close(fds[1]);
-
-    std::FILE* file = fdopen(fds[0], "rb+");
-    return Conn(file, file);
+    return fds[0];
 }
 
 class RemoteMemory {
@@ -332,7 +331,7 @@ void iw_sendobj(IWConnection* iwc, uintptr_t addr, const void* data,
 int iw_run_server(const struct IWFunctions* fns, int argc, char** argv) {
     InstrewConfig cfg(argc - 1, argv + 1);
     const char* stub = !cfg.stub.empty() ? cfg.stub.c_str() : nullptr;
-    Conn conn = Conn::CreateFork(stub, argv[0], cfg.user_argc, cfg.user_args);
+    Conn conn(CreateChild(stub, argv[0], cfg.user_argc, cfg.user_args));
     IWConnection iwc{fns, cfg, conn};
     return iwc.Run();
 }
