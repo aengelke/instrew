@@ -374,8 +374,8 @@ const struct IWServerConfig* iw_get_sc(IWConnection* iwc) {
 struct IWClientConfig* iw_get_cc(IWConnection* iwc) {
     return &iwc->iwcc;
 }
-size_t iw_readmem(IWConnection* iwc, uintptr_t addr, size_t len, uint8_t* buf) {
-    return iwc->remote_memory.Get(addr, len, buf);
+size_t iw_readmem(IWConnection* iwc, uintptr_t addr, uintptr_t end, uint8_t* buf) {
+    return iwc->remote_memory.Get(addr, end, buf);
 }
 bool iw_cache_probe(IWConnection* iwc, uintptr_t addr, const uint8_t* hash) {
     return iwc->CacheProbe(addr, hash);
