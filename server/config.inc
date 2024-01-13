@@ -8,6 +8,7 @@ INSTREW_OPT(int, dumpir, false)
 INSTREW_OPT(bool, profile, false)
 INSTREW_OPT(bool, timepasses, false)
 INSTREW_OPT(bool, trace, false)
+INSTREW_OPT(bool, verify, false) // verify ir
 INSTREW_OPT(int, granularity, 2)
 INSTREW_OPT(bool, safecallret, false)
 INSTREW_OPT(bool, fullfacets, false)
