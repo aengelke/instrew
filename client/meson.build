@@ -41,6 +41,7 @@ client = executable('instrew-client', sources,
                     include_directories: include_directories('.', '../shared'),
                     c_args: client_c_args,
                     link_args: client_link_args,
-                    install: true)
+                    install: true,
+                    override_options: ['b_sanitize=none'])
 
 test('mathlib', executable('test_mathlib', 'math.c', c_args: ['-DTEST', '-fno-builtin']), protocol: 'tap')
