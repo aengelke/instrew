@@ -323,12 +323,16 @@ struct CCState {
             for (unsigned i = 0; i < fields.size(); i++)
                 params[fields[i].argidx] = vals[i];
 
-            if (auto name = FuncConstName(params[0])) {
-                auto fnc = tgt->getParent()->getOrInsertFunction(*name, tgt_ty);
-                tgt = llvm::cast<llvm::Function>(fnc.getCallee());
-                tgt->copyAttributesFrom(nfn);
-                tgt->setDSOLocal(true);
-                params[0] = llvm::UndefValue::get(params[0]->getType());
+            unsigned pcFieldIdx = GetFieldIdx(0);
+            if (pcFieldIdx > 0) {
+                unsigned pcParamIdx = fields[pcFieldIdx - 1].argidx;
+                if (auto name = FuncConstName(params[pcParamIdx])) {
+                    auto fnc = tgt->getParent()->getOrInsertFunction(*name, tgt_ty);
+                    tgt = llvm::cast<llvm::Function>(fnc.getCallee());
+                    tgt->copyAttributesFrom(nfn);
+                    tgt->setDSOLocal(true);
+                    params[pcParamIdx] = llvm::UndefValue::get(params[pcParamIdx]->getType());
+                }
             }
 
             auto newcall = irb.CreateCall(tgt_ty, tgt, params);
