@@ -64,8 +64,11 @@ Cache::Cache(const InstrewConfig& instrew_cfg) {
     std::error_code ec;
     // F*ck C++ creates this with 0777, but 0755 would be better.
     // TODO: fix cache dir permissions
-    if (std::filesystem::create_directories(path, ec) || ec)
+    std::filesystem::create_directories(path, ec);
+    if (ec) {
+        std::cerr << "unable to create cache directory, disabling cache" << std::endl;
         return;
+    }
     if (instrew_cfg.cachemode == "rw") {
         allow_read = true;
         allow_write = true;
