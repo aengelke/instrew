@@ -3,7 +3,6 @@
 #include "codegenerator.h"
 #include "config.h"
 #include "connection.h"
-#include "decode.h"
 #include "instrew-server-config.h"
 #include "optimizer.h"
 
@@ -146,9 +145,6 @@ private:
     const InstrewConfig& instrew_cfg;
     CallConv instrew_cc = CallConv::CDECL;
 
-    using DecodeFunc = DecodeResult (*)(uintptr_t, size_t, const uint8_t*);
-    DecodeFunc decode_fn;
-
     LLConfig* rlcfg;
     llvm::LLVMContext ctx;
     llvm::Constant* pc_base;
@@ -162,6 +158,7 @@ private:
     CodeGenerator codegen;
 
     uint8_t config_hash[SHA_DIGEST_LENGTH];
+    llvm::SmallVector<uint8_t, 256> range_buffer;
 
     std::chrono::steady_clock::duration dur_predecode{};
     std::chrono::steady_clock::duration dur_lifting{};
@@ -194,7 +191,6 @@ public:
         }
         if (iwsc->tsc_guest_arch == EM_X86_64) {
             ll_config_set_architecture(rlcfg, "x86-64");
-            decode_fn = DecodeX86_64;
 
             auto syscall_fn = CreateFunc(ctx, "syscall");
             helper_fns.push_back(syscall_fn);
@@ -211,14 +207,12 @@ public:
             ll_config_set_cpuinfo_func(rlcfg, llvm::wrap(cpuinfo_fn));
         } else if (iwsc->tsc_guest_arch == EM_RISCV) {
             ll_config_set_architecture(rlcfg, "rv64");
-            decode_fn = DecodeRV64;
 
             auto syscall_fn = CreateFunc(ctx, "syscall_rv64");
             helper_fns.push_back(syscall_fn);
             ll_config_set_syscall_impl(rlcfg, llvm::wrap(syscall_fn));
         } else if (iwsc->tsc_guest_arch == EM_AARCH64) {
             ll_config_set_architecture(rlcfg, "aarch64");
-            decode_fn = DecodeAArch64;
 
             auto syscall_fn = CreateFunc(ctx, "syscall_aarch64");
             helper_fns.push_back(syscall_fn);
@@ -330,130 +324,29 @@ public:
         }
         if (instrew_cfg.timepasses)
             llvm::reportAndResetTimings(&llvm::errs());
+        ll_config_free(rlcfg);
     }
 
-private:
-    struct DecodedInst {
-        uint64_t addr;
-        uint8_t size;
-        bool new_block;
-    };
+    void Translate(uintptr_t addr) {
+        auto time_predecode_start = std::chrono::steady_clock::now();
 
-    void Predecode(uintptr_t addr, SHA_CTX* sha, std::vector<DecodedInst>& insts) {
-        uint8_t inst_buf[15];
-
-        std::unordered_map<uintptr_t, size_t> addr_map; // map addr -> inst idx
-        std::deque<uintptr_t> addr_queue;
-        addr_queue.push_back(addr);
-
-        while (!addr_queue.empty()) {
-            uintptr_t cur_addr = addr_queue.front();
-            addr_queue.pop_front();
-
-            bool new_block = true;
-            while (true) {
-                auto cur_idx_iter = addr_map.find(cur_addr);
-                if (cur_idx_iter != addr_map.end()) {
-                    insts[cur_idx_iter->second].new_block = true;
-                    goto end_block;
-                }
-
-                size_t count = iw_readmem(iwc, cur_addr, cur_addr + sizeof inst_buf, inst_buf);
-                auto& inst = insts.emplace_back(DecodedInst{});
-                DecodeResult res = decode_fn(cur_addr, count, inst_buf);
-                if (res.result == DecodeResult::FAILED) {
-                    insts.erase(insts.end() - 1);
-                    goto end_block;
-                }
-
-                if (new_block) {
-                    ptrdiff_t off = cur_addr - addr;
-                    SHA1_Update(sha, &off, sizeof off);
-                }
-                SHA1_Update(sha, inst_buf, res.size * sizeof inst_buf[0]);
-
-                addr_map[cur_addr] = insts.size() - 1;
-                inst.new_block = new_block;
-                inst.addr = cur_addr;
-                inst.size = res.size;
-                cur_addr += res.size;
-                new_block = false;
-
-                if (instrew_cfg.granularity <= 0)
-                    goto end_block;
-
-                switch (res.result) {
-                case DecodeResult::BRANCH:
-                    addr_queue.push_back(res.branch_target);
-                    goto end_block;
-                case DecodeResult::COND_BRANCH:
-                    addr_queue.push_back(res.branch_target);
-                    addr_queue.push_back(cur_addr);
-                    goto end_block;
-                case DecodeResult::CALL:
-                    if (instrew_cfg.callret)
-                        addr_queue.push_back(cur_addr);
-                    goto end_block;
-                case DecodeResult::UNKNOWN_TGT:
-                    goto end_block;
-                default:
-                    break;
-                }
-            };
-
-        end_block:
-            if (instrew_cfg.granularity <= 1)
-                break;
-        }
-    }
-
-    llvm::Function* Lift(uintptr_t addr, const std::vector<DecodedInst>& insts) {
         // Optionally generate position-independent code, where the offset
         // can be adjusted using relocations.
         if (instrew_cfg.pic)
             ll_config_set_pc_base(rlcfg, addr, llvm::wrap(pc_base));
 
         LLFunc* rlfn = ll_func_new(llvm::wrap(mod.get()), rlcfg);
-        uint8_t buf[15];
-        uint64_t block_addr = 0;
-        for (size_t i = 0; i < insts.size(); i++) {
-            const DecodedInst& inst = insts[i];
-            if (inst.new_block)
-                block_addr = inst.addr;
-            size_t count = iw_readmem(iwc, inst.addr, inst.addr + sizeof buf, buf);
-            int ret = ll_func_add_instr(rlfn, block_addr, inst.addr, count, buf);
-            if (ret != inst.size) {
-                if (i == 0) { // we failed at the first instruction...
-                    std::cerr << "error: could not decode at 0x"
-                              << std::hex << addr << std::endl;
-                    ll_func_dispose(rlfn);
-                    return nullptr;
-                }
-                // Skip forward to next block.
-                while (i < insts.size() - 1 && !insts[i + 1].new_block)
-                    i += 1;
-            }
-        }
-        LLVMValueRef fn_wrapped = ll_func_lift(rlfn);
-        if (!fn_wrapped) {
-            std::cerr << "error: lift failed 0x" << std::hex << addr
-                      << " #insts: " << std::dec << insts.size() << std::endl;
+        RellumeMemAccessCb accesscb = [](size_t addr, uint8_t* buf, size_t bufsz, void* user_arg) {
+            auto iwc = reinterpret_cast<IWConnection*>(user_arg);
+            return iw_readmem(iwc, addr, addr + bufsz, buf);
+        };
+        int fail = ll_func_decode_cfg(rlfn, addr, accesscb, reinterpret_cast<void*>(iwc));
+        if (fail) {
+            std::cerr << "error: decode failed 0x" << std::hex << addr << std::endl;
             ll_func_dispose(rlfn);
-            return nullptr;
+            iw_sendobj(iwc, addr, nullptr, 0, nullptr);
+            return;
         }
-
-        llvm::Function* fn = llvm::unwrap<llvm::Function>(fn_wrapped);
-        ll_func_dispose(rlfn);
-
-        fn->setName("S0");
-
-        return fn;
-    }
-
-public:
-    void Translate(uintptr_t addr) {
-        auto time_predecode_start = std::chrono::steady_clock::now();
-        std::vector<DecodedInst> insts;
 
         SHA_CTX sha;
         SHA1_Init(&sha);
@@ -461,22 +354,39 @@ public:
         // Non-PIC: store address, predecode only stores offsets to start addr.
         uint64_t hash_addr = instrew_cfg.pic ? 0 : addr;
         SHA1_Update(&sha, &hash_addr, sizeof hash_addr);
-        Predecode(addr, &sha, insts);
+        const struct RellumeCodeRange* ranges = ll_func_ranges(rlfn);
+        for (; ranges->start || ranges->end; ranges++) {
+            uint64_t rel_start = ranges->start - hash_addr;
+            uint64_t size = ranges->end - ranges->start;
+            SHA1_Update(&sha, &rel_start, sizeof rel_start);
+            SHA1_Update(&sha, &size, sizeof size);
+            range_buffer.resize_for_overwrite(size);
+            iw_readmem(iwc, ranges->start, ranges->end, range_buffer.data());
+            SHA1_Update(&sha, range_buffer.data(), size);
+        }
         uint8_t hash[SHA_DIGEST_LENGTH];
         SHA1_Final(hash, &sha);
 
         if (iw_cache_probe(iwc, addr, hash)) {
+            ll_func_dispose(rlfn);
             if (instrew_cfg.profile)
                 dur_predecode += std::chrono::steady_clock::now() - time_predecode_start;
             return;
         }
 
         auto time_lifting_start = std::chrono::steady_clock::now();
-        llvm::Function* fn = Lift(addr, insts);
-        if (!fn) {
+        LLVMValueRef fn_wrapped = !fail ? ll_func_lift(rlfn) : nullptr;
+        if (!fn_wrapped) {
+            std::cerr << "error: lift failed 0x" << std::hex << addr << "\n";
+            ll_func_dispose(rlfn);
             iw_sendobj(iwc, addr, nullptr, 0, nullptr);
             return;
         }
+
+        llvm::Function* fn = llvm::unwrap<llvm::Function>(fn_wrapped);
+        fn->setName("S0");
+        ll_func_dispose(rlfn);
+
         if (instrew_cfg.dumpir & 1)
             mod->print(llvm::errs(), nullptr);
 

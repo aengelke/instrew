@@ -4,7 +4,6 @@ sources = files(
     'codegenerator.cc',
     'config.cc',
     'connection.cc',
-    'decode.cc',
     'optimizer.cc',
     'rewriteserver.cc',
 )
@@ -21,6 +20,6 @@ client_bytes = custom_target('hex-client', output: 'client.inc', input: client,
 
 instrew = executable('instrew', sources, client_bytes,
                      include_directories: include_directories('.', '../shared'),
-                     dependencies: [librellume, fadec, frvdec, farmdec, libllvm, libcrypto, instrew_api],
+                     dependencies: [librellume, libllvm, libcrypto, instrew_api],
                      link_args: ['-ldl'],
                      install: true)
