@@ -237,7 +237,7 @@ int load_elf_binary(const char* filename, BinaryInfo* out_info) {
         retval = elf_read(fd, elf_ppnt->p_offset, interp_name, elf_ppnt->p_filesz);
         if (retval < 0)
             goto out_free_ph;
-        if (interp_name[elf_ppnt->p_filesz] != 0) {
+        if (interp_name[elf_ppnt->p_filesz - 1] != 0) {
             retval = -ENOEXEC;
             goto out_free_ph;
         }
