@@ -28,7 +28,7 @@ private:
     llvm::SmallVectorImpl<char>& obj_buffer;
     llvm::raw_svector_ostream obj_stream;
     llvm::MCContext* mc_ctx;
-    llvm::TargetMachine* target;
+    std::unique_ptr<llvm::TargetMachine> target;
     llvm::legacy::PassManager mc_pass_manager;
 
 public:
@@ -77,14 +77,14 @@ public:
             abort();
         }
 
-        target = the_target->createTargetMachine(
+        target = std::unique_ptr<llvm::TargetMachine>(the_target->createTargetMachine(
             /*TT=*/triple, /*CPU=*/"",
             /*Features=*/"", /*Options=*/target_options,
             /*RelocModel=*/rm,
             /*CodeModel=*/cm,
             /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(cfg.targetopt),
             /*JIT=*/true
-        );
+        ));
         if (!target) {
             std::cerr << "could not allocate target machine" << std::endl;
             abort();
