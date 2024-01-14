@@ -4,4 +4,6 @@ cases = [
   {'name': 'call-pop', 'src': files('call-pop.S')},
   {'name': 'nowrite', 'src': files('nowrite.S'), 'should_fail': true},
   {'name': 'fork', 'src': files('fork.S')},
+  {'name': 'recursion', 'src': files('recursion.S')},
+  {'name': 'recursion-callret', 'src': files('recursion.S'), 'instrew_args': ['-callret']},
 ]
