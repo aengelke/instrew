@@ -1,8 +1,8 @@
-# Instrew — LLVM-based Dynamic Binary Instrumentation
+# Instrew — LLVM-based Dynamic Binary Translation
 
 [![builds.sr.ht status](https://builds.sr.ht/~aengelke/instrew/commits/master.svg)](https://builds.sr.ht/~aengelke/instrew/commits/master?)
 
-Instrew is a performance-targeted transparent dynamic binary translator/instrumenter based on LLVM. Currently supported source/guest architectures are x86-64, AArch64, and RISC-V64 (rv64imafdc); supported host architectures are x86-64 and AArch64. The original code is lifted to LLVM-IR using [Rellume](https://github.com/aengelke/rellume), where it can be modified and from which new machine code is generated using LLVM's JIT compiler.
+Instrew is a performance-targeted transparent dynamic binary translator(/instrumenter) based on LLVM. Currently supported source/guest architectures are x86-64, AArch64, and RISC-V64 (rv64imafdc); supported host architectures are x86-64 and AArch64. The original code is lifted to LLVM-IR using [Rellume](https://github.com/aengelke/rellume), where it can be modified and from which new machine code is generated using LLVM's JIT compiler.
 
 ### Using Instrew
 
@@ -27,11 +27,11 @@ You can also use some options to customize the translation:
 - `-profile`: print information about the time used for translation.
 - `-callret`: enable call–return optimization. Often gives higher run-time performance at higher translation-time.
 - `-targetopt=n`: set LLVM optimization level, 0-3. Default is 3, use 0 for FastISel.
-- `-callconv=0`: use C calling convention instead of architecture-specific optimized calling convention; primarily useful for debugging.
+- `-fastcc=0`: use C calling convention instead of architecture-specific optimized calling convention; primarily useful for debugging.
 - `-perf=n`: enable perf support. 1=generate memory map, 2=generate JITDUMP
-- `-dumpir=n`: print IR at different stages, 1=after lifting, 2=after callconv adjustment/instrumentation, 4=after optimization, 8=after codegen. These values can be OR-ed for multiple dumps. Generates lots of output.
+- `-dumpir={lift,cc,opt,codegen}`: print IR after the specified stage. Generates lots of output.
 - `-dumpobj`: dump compiled code into object files in the current working directory.
-- All options are listed in [server/config.inc](server/config.inc).
+- `-help`/`-help-hidden` shows more options.
 
 Example:
 
