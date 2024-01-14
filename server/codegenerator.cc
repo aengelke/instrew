@@ -40,7 +40,7 @@ public:
         llvm::InitializeNativeTargetAsmParser();
 
         llvm::TargetOptions target_options;
-        target_options.EnableFastISel = 1; // Use FastISel for CodeGenOpt::None
+        target_options.EnableFastISel = cfg.targetopt == 0; // Use FastISel for CodeGenOpt::None
 #if LL_LLVM_MAJOR < 13
         // In LLVM13+, Module::setOverrideStackAlignment is used instead.
         if (server_config.tsc_stack_alignment != 0)
