@@ -4,6 +4,7 @@
 #include "cache.h"
 #include "config.h"
 
+#include <llvm/Support/CommandLine.h>
 #include <array>
 #include <cassert>
 #include <cstddef>
@@ -23,6 +24,11 @@
 
 
 namespace {
+
+llvm::cl::opt<bool> dumpObjects("dumpobj", llvm::cl::desc("Dump compiled object files"), llvm::cl::Hidden, llvm::cl::cat(InstrewCategory));
+llvm::cl::opt<std::string> Stub("stub", llvm::cl::desc("Path for instrew client stub (default: built-in stub). Only useful for debugging."), llvm::cl::value_desc("instrew-client"), llvm::cl::Hidden, llvm::cl::cat(InstrewCategory));
+llvm::cl::opt<std::string> Program(llvm::cl::Positional, llvm::cl::desc("<program>"), llvm::cl::Required);
+llvm::cl::list<std::string> ProgramArgs(llvm::cl::ConsumeAfter, llvm::cl::desc("<arguments>..."));
 
 struct HexBuffer {
     const uint8_t* buf;
@@ -146,8 +152,7 @@ public:
     }
 };
 
-int CreateChild(const char* stub_path, char* argv0, size_t uargc,
-                const char* const* uargv) {
+int CreateChild(char* argv0) {
     int fds[2];
     int ret = socketpair(AF_UNIX, SOCK_STREAM, 0, &fds[0]);
     if (ret < 0) {
@@ -158,15 +163,16 @@ int CreateChild(const char* stub_path, char* argv0, size_t uargc,
     std::string client_config = std::to_string(fds[1]);
 
     std::vector<const char*> exec_args;
-    exec_args.reserve(uargc + 3);
+    exec_args.reserve(ProgramArgs.size() + 4);
     exec_args.push_back(argv0);
     exec_args.push_back(client_config.c_str());
-    for (size_t i = 0; i < uargc; i++)
-        exec_args.push_back(uargv[i]);
+    exec_args.push_back(Program.c_str());
+    for (auto& uarg : ProgramArgs)
+        exec_args.push_back(uarg.c_str());
     exec_args.push_back(nullptr);
 
     int memfd = -1;
-    if (!stub_path) {
+    if (Stub.empty()) {
         static const unsigned char instrew_stub[] = {
     #include "client.inc"
         };
@@ -197,7 +203,7 @@ int CreateChild(const char* stub_path, char* argv0, size_t uargc,
         if (memfd >= 0)
             fexecve(memfd, const_cast<char* const*>(&exec_args[0]), environ);
         else
-            execve(stub_path, const_cast<char* const*>(&exec_args[0]), environ);
+            execve(Stub.c_str(), const_cast<char* const*>(&exec_args[0]), environ);
         perror("fexecve");
         std::exit(1);
     }
@@ -263,7 +269,6 @@ public:
 
 struct IWConnection {
     const struct IWFunctions* fns;
-    InstrewConfig& cfg;
     Conn& conn;
 
     IWServerConfig iwsc;
@@ -273,12 +278,12 @@ struct IWConnection {
     RemoteMemory remote_memory;
     instrew::Cache cache;
 
-    IWConnection(const struct IWFunctions* fns, InstrewConfig& cfg, Conn& conn)
-            : fns(fns), cfg(cfg), conn(conn), remote_memory(conn) {}
+    IWConnection(const struct IWFunctions* fns, Conn& conn)
+            : fns(fns), conn(conn), remote_memory(conn) {}
 
 private:
     FILE* OpenObjDump(uint64_t addr) {
-        if (!cfg.dumpobj)
+        if (!dumpObjects)
             return nullptr;
         std::stringstream debug_out1_name;
         debug_out1_name << std::hex << "func_" << addr << ".elf";
@@ -322,9 +327,7 @@ public:
         // In mode 0, we need to respond with a client config.
         need_iwcc = iwsc.tsc_server_mode == 0;
 
-        cache = instrew::Cache(cfg);
-
-        IWState* state = fns->init(this, cfg);
+        IWState* state = fns->init(this);
         if (need_iwcc)
             SendObject(0, "", 0, nullptr); // this will send the client config
 
@@ -386,9 +389,7 @@ void iw_sendobj(IWConnection* iwc, uintptr_t addr, const void* data,
 }
 
 int iw_run_server(const struct IWFunctions* fns, int argc, char** argv) {
-    InstrewConfig cfg(argc - 1, argv + 1);
-    const char* stub = !cfg.stub.empty() ? cfg.stub.c_str() : nullptr;
-    Conn conn(CreateChild(stub, argv[0], cfg.user_argc, cfg.user_args));
-    IWConnection iwc{fns, cfg, conn};
+    Conn conn(CreateChild(argv[0]));
+    IWConnection iwc{fns, conn};
     return iwc.Run();
 }

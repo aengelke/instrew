@@ -48,7 +48,7 @@ void Optimizer::Optimize(llvm::Function* fn) {
 
     // fpm.addPass(llvm::ADCEPass());
     fpm.addPass(llvm::DCEPass());
-    fpm.addPass(llvm::EarlyCSEPass(instrew_cfg.extrainstcombine));
+    fpm.addPass(llvm::EarlyCSEPass(/*MemorySSA=*/false));
     // fpm.addPass(llvm::NewGVNPass());
     // fpm.addPass(llvm::DSEPass());
 
@@ -66,8 +66,8 @@ void Optimizer::Optimize(llvm::Function* fn) {
     // fpm.addPass(llvm::ReassociatePass());
     // fpm.addPass(llvm::MergedLoadStoreMotionPass());
     fpm.addPass(llvm::MemCpyOptPass());
-    if (instrew_cfg.extrainstcombine)
-        fpm.addPass(llvm::InstCombinePass());
+    // if (instrew_cfg.extrainstcombine)
+        // fpm.addPass(llvm::InstCombinePass());
     // fpm.addPass(llvm::SCCPPass());
     // fpm.addPass(llvm::AAEvaluator());
     fpm.run(*fn, fam);

@@ -32,6 +32,36 @@
 #include <unordered_map>
 
 
+namespace {
+
+enum class DumpIR {
+    Lift, CC, Opt, CodeGen,
+};
+
+llvm::cl::opt<bool> enableProfiling("profile", llvm::cl::desc("Profile translation"), llvm::cl::cat(InstrewCategory));
+llvm::cl::opt<bool> enableTracing("trace", llvm::cl::desc("Trace execution (lots of logs)"), llvm::cl::cat(InstrewCategory));
+llvm::cl::opt<unsigned char> perfSupport("perf", llvm::cl::desc("Enable perf support:"),
+    llvm::cl::values(
+        clEnumVal(0, "disabled"),
+        clEnumVal(1, "write perf memory map"),
+        clEnumVal(2, "write jitdump file")
+        ),
+    llvm::cl::cat(InstrewCategory));
+llvm::cl::opt<bool> verifyLiftedIR("verify-lifted", llvm::cl::desc("Verify lifted IR"), llvm::cl::cat(InstrewCategory));
+llvm::cl::bits<DumpIR> dumpIR("dumpir", llvm::cl::desc("Dump IR after:"),
+    llvm::cl::values(
+        clEnumValN(DumpIR::Lift, "lift", "lifting"),
+        clEnumValN(DumpIR::CC, "cc", "calling convention"),
+        clEnumValN(DumpIR::Opt, "opt", "optimizations"),
+        clEnumValN(DumpIR::CodeGen, "codegen", "code generation")
+        ), llvm::cl::cat(InstrewCategory));
+llvm::cl::opt<bool> safeCallRet("safe-call-ret", llvm::cl::desc("Don't clobber flags on call/ret instructions"), llvm::cl::cat(CodeGenCategory));
+llvm::cl::opt<bool> enableCallret("callret", llvm::cl::desc("Enable call-ret lifting"), llvm::cl::cat(CodeGenCategory));
+llvm::cl::opt<bool> enableFastcc("fastcc", llvm::cl::desc("Enable register-based calling convention (default: true)"), llvm::cl::init(true), llvm::cl::cat(CodeGenCategory));
+llvm::cl::opt<bool> enablePIC("pic", llvm::cl::desc("Compile code position-independent"), llvm::cl::cat(CodeGenCategory));
+
+} // end anonymous namespace
+
 #define SPTR_ADDR_SPACE 1
 
 static llvm::Function* CreateFunc(llvm::LLVMContext& ctx,
@@ -60,7 +90,6 @@ private:
     IWConnection* iwc;
     const IWServerConfig* iwsc = nullptr;
     IWClientConfig* iwcc = nullptr;
-    const InstrewConfig& instrew_cfg;
     CallConv instrew_cc = CallConv::CDECL;
 
     LLConfig* rlcfg;
@@ -84,22 +113,18 @@ private:
 
 public:
 
-    IWState(IWConnection* iwc, const InstrewConfig& cfg)
-            : instrew_cfg(cfg), optimizer(instrew_cfg),
-              codegen(*iw_get_sc(iwc), instrew_cfg, obj_buffer) {
+    IWState(IWConnection* iwc)
+            : codegen(*iw_get_sc(iwc), enablePIC, obj_buffer) {
         this->iwc = iwc;
         iwsc = iw_get_sc(iwc);
         iwcc = iw_get_cc(iwc);
 
-        llvm::TimePassesIsEnabled = instrew_cfg.timepasses;
-
         rlcfg = ll_config_new();
-        ll_config_enable_verify_ir(rlcfg, instrew_cfg.verify);
-        ll_config_set_call_ret_clobber_flags(rlcfg, !instrew_cfg.safecallret);
-        ll_config_enable_full_facets(rlcfg, instrew_cfg.fullfacets);
+        ll_config_enable_verify_ir(rlcfg, verifyLiftedIR);
+        ll_config_set_call_ret_clobber_flags(rlcfg, !safeCallRet);
         ll_config_set_sptr_addrspace(rlcfg, SPTR_ADDR_SPACE);
         ll_config_enable_overflow_intrinsics(rlcfg, false);
-        if (instrew_cfg.callret) {
+        if (enableCallret) {
             auto call_fn = CreateFunc(ctx, "instrew_call_cdecl");
             helper_fns.push_back(call_fn);
             ll_config_set_tail_func(rlcfg, llvm::wrap(call_fn));
@@ -139,14 +164,14 @@ public:
         }
 
         // Backward compatibility -- only one fast CC per guest--host pair now.
-        if (instrew_cfg.callconv >= 1 && instrew_cfg.callconv < 6)
+        if (enableFastcc)
             instrew_cc = GetFastCC(iwsc->tsc_host_arch, iwsc->tsc_guest_arch);
         else
             instrew_cc = CallConv::CDECL;
         iwcc->tc_callconv = GetCallConvClientNumber(instrew_cc);
-        iwcc->tc_profile = cfg.profile;
-        iwcc->tc_perf = cfg.perf;
-        iwcc->tc_print_trace = cfg.trace;
+        iwcc->tc_profile = enableProfiling;
+        iwcc->tc_perf = perfSupport;
+        iwcc->tc_print_trace = enableTracing;
 
         llvm::GlobalVariable* pc_base_var = CreatePcBase(ctx);
         pc_base = llvm::ConstantExpr::getPtrToInt(pc_base_var,
@@ -189,12 +214,13 @@ public:
 
         SHA_CTX config_sha;
         SHA1_Init(&config_sha);
-        SHA1_Update(&config_sha, &instrew_cfg.targetopt, sizeof instrew_cfg.targetopt);
-        SHA1_Update(&config_sha, &instrew_cfg.extrainstcombine, sizeof instrew_cfg.extrainstcombine);
-        SHA1_Update(&config_sha, &instrew_cfg.safecallret, sizeof instrew_cfg.safecallret);
-        SHA1_Update(&config_sha, &instrew_cfg.fullfacets, sizeof instrew_cfg.fullfacets);
-        SHA1_Update(&config_sha, &instrew_cfg.callret, sizeof instrew_cfg.callret);
-        SHA1_Update(&config_sha, &instrew_cfg.pic, sizeof instrew_cfg.pic);
+        // XXX
+        // SHA1_Update(&config_sha, &cfg.targetopt, sizeof cfg.targetopt);
+        // SHA1_Update(&config_sha, &cfg.extrainstcombine, sizeof cfg.extrainstcombine);
+        // SHA1_Update(&config_sha, &cfg.safecallret, sizeof cfg.safecallret);
+        // SHA1_Update(&config_sha, &cfg.fullfacets, sizeof cfg.fullfacets);
+        // SHA1_Update(&config_sha, &cfg.callret, sizeof cfg.callret);
+        // SHA1_Update(&config_sha, &cfg.pic, sizeof cfg.pic);
         SHA1_Update(&config_sha, &iwsc->tsc_guest_arch, sizeof iwsc->tsc_guest_arch);
         SHA1_Update(&config_sha, &iwsc->tsc_host_arch, sizeof iwsc->tsc_host_arch);
         SHA1_Update(&config_sha, &iwsc->tsc_host_cpu_features, sizeof iwsc->tsc_host_cpu_features);
@@ -203,7 +229,7 @@ public:
         SHA1_Final(config_hash, &config_sha);
     }
     ~IWState() {
-        if (instrew_cfg.profile) {
+        if (enableProfiling) {
             std::cerr << "Server profile: " << std::dec
                       << std::chrono::duration_cast<std::chrono::milliseconds>(dur_predecode).count()
                       << "ms predecode; "
@@ -217,8 +243,7 @@ public:
                       << "ms llvm_codegen"
                       << std::endl;
         }
-        if (instrew_cfg.timepasses)
-            llvm::reportAndResetTimings(&llvm::errs());
+        llvm::reportAndResetTimings(&llvm::errs());
         ll_config_free(rlcfg);
     }
 
@@ -227,7 +252,7 @@ public:
 
         // Optionally generate position-independent code, where the offset
         // can be adjusted using relocations.
-        if (instrew_cfg.pic)
+        if (enablePIC)
             ll_config_set_pc_base(rlcfg, addr, llvm::wrap(pc_base));
 
         LLFunc* rlfn = ll_func_new(llvm::wrap(mod.get()), rlcfg);
@@ -247,7 +272,7 @@ public:
         SHA1_Init(&sha);
         SHA1_Update(&sha, config_hash, sizeof config_hash);
         // Non-PIC: store address, predecode only stores offsets to start addr.
-        uint64_t hash_addr = instrew_cfg.pic ? 0 : addr;
+        uint64_t hash_addr = enablePIC ? 0 : addr;
         SHA1_Update(&sha, &hash_addr, sizeof hash_addr);
         const struct RellumeCodeRange* ranges = ll_func_ranges(rlfn);
         for (; ranges->start || ranges->end; ranges++) {
@@ -264,7 +289,7 @@ public:
 
         if (iw_cache_probe(iwc, addr, hash)) {
             ll_func_dispose(rlfn);
-            if (instrew_cfg.profile)
+            if (enableProfiling)
                 dur_predecode += std::chrono::steady_clock::now() - time_predecode_start;
             return;
         }
@@ -282,22 +307,22 @@ public:
         fn->setName("S0");
         ll_func_dispose(rlfn);
 
-        if (instrew_cfg.dumpir & 1)
+        if (dumpIR.isSet(DumpIR::Lift))
             mod->print(llvm::errs(), nullptr);
 
         auto time_instrument_start = std::chrono::steady_clock::now();
         fn = ChangeCallConv(fn, instrew_cc);
-        if (instrew_cfg.dumpir & 2)
+        if (dumpIR.isSet(DumpIR::CC))
             mod->print(llvm::errs(), nullptr);
 
         auto time_llvm_opt_start = std::chrono::steady_clock::now();
         optimizer.Optimize(fn);
-        if (instrew_cfg.dumpir & 4)
+        if (dumpIR.isSet(DumpIR::Opt))
             mod->print(llvm::errs(), nullptr);
 
         auto time_llvm_codegen_start = std::chrono::steady_clock::now();
         codegen.GenerateCode(mod.get());
-        if (instrew_cfg.dumpir & 8)
+        if (dumpIR.isSet(DumpIR::CodeGen))
             mod->print(llvm::errs(), nullptr);
 
         iw_sendobj(iwc, addr, obj_buffer.data(), obj_buffer.size(), hash);
@@ -308,7 +333,7 @@ public:
             if (glob_fn.use_empty())
                 glob_fn.eraseFromParent();
 
-        if (instrew_cfg.profile) {
+        if (enableProfiling) {
             dur_predecode += time_lifting_start - time_predecode_start;
             dur_lifting += time_instrument_start - time_lifting_start;
             dur_instrument += time_llvm_opt_start - time_instrument_start;
@@ -320,9 +345,14 @@ public:
 
 
 int main(int argc, char** argv) {
+    llvm::cl::HideUnrelatedOptions({&InstrewCategory, &CodeGenCategory});
+    auto& optionMap = llvm::cl::getRegisteredOptions();
+    optionMap["time-passes"]->setHiddenFlag(llvm::cl::Hidden);
+    llvm::cl::ParseCommandLineOptions(argc, argv);
+
     static const IWFunctions iwf = {
-        /*.init=*/[](IWConnection* iwc, const InstrewConfig& cfg) {
-            return new IWState(iwc, cfg);
+        /*.init=*/[](IWConnection* iwc) {
+            return new IWState(iwc);
         },
         /*.translate=*/[](IWState* state, uintptr_t addr) {
             state->Translate(addr);

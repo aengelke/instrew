@@ -7,11 +7,10 @@
 
 
 struct IWServerConfig;
-struct InstrewConfig;
 
 class CodeGenerator {
 public:
-    CodeGenerator(const IWServerConfig& server_config, const InstrewConfig&,
+    CodeGenerator(const IWServerConfig& server_config, bool pic,
                   llvm::SmallVectorImpl<char> &o);
     ~CodeGenerator();
     void GenerateCode(llvm::Module* mod);

@@ -8,6 +8,7 @@
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/CommandLine.h>
 #include <llvm/Support/Host.h>
 // LLVM < 13 has TargetRegistry.h in Support/
 #if __has_include(<llvm/MC/TargetRegistry.h>)
@@ -23,6 +24,15 @@
 #include <iostream>
 
 
+namespace {
+
+llvm::cl::opt<unsigned> targetopt("targetopt", llvm::cl::init(2),
+                       llvm::cl::desc("Back-end optimization level (default: 2)"),
+                       llvm::cl::value_desc("0/1/2/3"),
+                       llvm::cl::cat(CodeGenCategory));
+
+} // end anonymous namespace
+
 class CodeGenerator::impl {
 private:
     llvm::SmallVectorImpl<char>& obj_buffer;
@@ -32,7 +42,7 @@ private:
     llvm::legacy::PassManager mc_pass_manager;
 
 public:
-    impl(const IWServerConfig& server_config, const InstrewConfig& cfg,
+    impl(const IWServerConfig& server_config, bool pic,
          llvm::SmallVectorImpl<char> &o)
             : obj_buffer(o), obj_stream(o), mc_ctx(nullptr), mc_pass_manager() {
         llvm::InitializeNativeTarget();
@@ -40,7 +50,7 @@ public:
         llvm::InitializeNativeTargetAsmParser();
 
         llvm::TargetOptions target_options;
-        target_options.EnableFastISel = cfg.targetopt == 0; // Use FastISel for CodeGenOpt::None
+        target_options.EnableFastISel = targetopt == 0; // Use FastISel for CodeGenOpt::None
 #if LL_LLVM_MAJOR < 13
         // In LLVM13+, Module::setOverrideStackAlignment is used instead.
         if (server_config.tsc_stack_alignment != 0)
@@ -52,12 +62,12 @@ public:
         switch (server_config.tsc_host_arch) {
         case EM_X86_64:
             triple = "x86_64-unknown-linux-gnu";
-            cm = cfg.pic ? llvm::CodeModel::Medium : llvm::CodeModel::Small;
+            cm = pic ? llvm::CodeModel::Medium : llvm::CodeModel::Small;
             break;
         case EM_AARCH64:
             triple = "aarch64-unknown-linux-gnu";
             // The AArch64 target doesn't support the medium code model.
-            cm = cfg.pic ? llvm::CodeModel::Large : llvm::CodeModel::Small;
+            cm = pic ? llvm::CodeModel::Large : llvm::CodeModel::Small;
             break;
         default:
             std::cerr << "unknown host architecture" << std::endl;
@@ -67,7 +77,7 @@ public:
         llvm::Reloc::Model rm = llvm::Reloc::Static;
         // For non-PIC code, we use the small code model. Since we don't link
         // objects to 32-bit addresses, these must be addressed PC-relative.
-        if (!cfg.pic)
+        if (!pic)
             rm = llvm::Reloc::PIC_;
 
         std::string error;
@@ -82,7 +92,7 @@ public:
             /*Features=*/"", /*Options=*/target_options,
             /*RelocModel=*/rm,
             /*CodeModel=*/cm,
-            /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(cfg.targetopt),
+            /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(targetopt),
             /*JIT=*/true
         ));
         if (!target) {
@@ -104,8 +114,8 @@ public:
     }
 };
 
-CodeGenerator::CodeGenerator(const IWServerConfig& sc, const InstrewConfig& ic,
+CodeGenerator::CodeGenerator(const IWServerConfig& sc, bool pic,
                              llvm::SmallVectorImpl<char>& o)
-        : pimpl{std::make_unique<impl>(sc, ic, o)} {}
+        : pimpl{std::make_unique<impl>(sc, pic, o)} {}
 CodeGenerator::~CodeGenerator() {}
 void CodeGenerator::GenerateCode(llvm::Module* m) { pimpl->GenerateCode(m); }

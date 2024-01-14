@@ -8,15 +8,8 @@
 #include <cstdint>
 
 
-struct InstrewConfig;
-
 class Optimizer {
-private:
-    const InstrewConfig& instrew_cfg;
-
 public:
-    Optimizer(const InstrewConfig& instrew_cfg) : instrew_cfg(instrew_cfg) {}
-
     void Optimize(llvm::Function* fn);
 };
 

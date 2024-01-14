@@ -2,8 +2,6 @@
 #ifndef _INSTREW_SERVER_CONNECTION_H
 #define _INSTREW_SERVER_CONNECTION_H
 
-#include <config.h>
-
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
@@ -38,7 +36,7 @@ void iw_sendobj(IWConnection* iwc, uintptr_t addr, const void* data, size_t size
 typedef struct IWState IWState;
 
 struct IWFunctions {
-    struct IWState* (* init)(IWConnection* iwc, const InstrewConfig& cfg);
+    struct IWState* (* init)(IWConnection* iwc);
     void (* translate)(IWState* state, uintptr_t addr);
     void (* finalize)(IWState* state);
 };

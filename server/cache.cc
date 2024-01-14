@@ -1,6 +1,9 @@
 
 #include "cache.h"
 
+#include "config.h"
+
+#include <llvm/Support/CommandLine.h>
 #include <fcntl.h>
 #include <filesystem>
 #include <iostream>
@@ -18,6 +21,21 @@ namespace instrew {
 // https://github.com/mesa3d/mesa/blob/main/src/util/disk_cache_os.c
 
 namespace {
+
+enum class CacheMode {
+    ReadOnly, WriteOnly, ReadWrite
+};
+
+llvm::cl::opt<bool> cacheEnabled("cache", llvm::cl::desc("Enable caching"), llvm::cl::cat(InstrewCategory));
+llvm::cl::opt<CacheMode> cacheMode("cachemode", llvm::cl::desc("Allowed cache accesses:"),
+        llvm::cl::init(CacheMode::ReadWrite),
+        llvm::cl::values(
+            clEnumValN(CacheMode::ReadWrite, "readwrite", "Read-write (default)"),
+            clEnumValN(CacheMode::ReadOnly, "readonly", "Read-only"),
+            clEnumValN(CacheMode::WriteOnly, "writeonly", "Write-only (rarely useful)")
+            ), llvm::cl::cat(InstrewCategory));
+llvm::cl::opt<std::string> cacheDir("cachedir", llvm::cl::desc("Cache directory"), llvm::cl::cat(InstrewCategory));
+llvm::cl::opt<bool> cacheVerbose("cacheverbose", llvm::cl::desc("Print cache operations"), llvm::cl::Hidden, llvm::cl::cat(InstrewCategory));
 
 struct HexBuffer {
     const uint8_t* buf;
@@ -46,15 +64,15 @@ static ssize_t write_full(int fd, const char* buf, size_t nbytes) {
 
 } // end namespace
 
-Cache::Cache(const InstrewConfig& instrew_cfg) {
+Cache::Cache() {
     allow_read = false;
     allow_write = false; // default to no cache -- it's not critical.
-    if (!instrew_cfg.cache)
+    if (!cacheEnabled)
         return;
     if (geteuid() != getuid())
         return;
-    if (instrew_cfg.cachedir != "") {
-        path = instrew_cfg.cachedir;
+    if (!cacheDir.empty()) {
+        path = static_cast<std::string>(cacheDir);
     } else {
         passwd* pw = getpwuid(getuid());
         path = pw->pw_dir;
@@ -69,18 +87,8 @@ Cache::Cache(const InstrewConfig& instrew_cfg) {
         std::cerr << "unable to create cache directory, disabling cache" << std::endl;
         return;
     }
-    if (instrew_cfg.cachemode == "rw") {
-        allow_read = true;
-        allow_write = true;
-    } else if (instrew_cfg.cachemode == "r") {
-        allow_read = true;
-    } else if (instrew_cfg.cachemode == "w") {
-        allow_write = true;
-    } else {
-        // Well... keep allow_read and allow_write as false.
-        std::cerr << "invalid cache mode, disabling cache" << std::endl;
-    }
-    verbose = instrew_cfg.cacheverbose;
+    allow_read = cacheMode != CacheMode::WriteOnly;
+    allow_write = cacheMode != CacheMode::ReadOnly;
 }
 
 Cache::~Cache() {
@@ -105,7 +113,7 @@ std::pair<int,size_t> Cache::Get(const uint8_t* hash) {
         close(fd);
         return std::make_pair(-1, 0);
     }
-    if (verbose)
+    if (cacheVerbose)
         std::cerr << "hitting " << cachefile << "\n";
     return std::make_pair(fd, sb.st_size);
 }
@@ -139,7 +147,7 @@ void Cache::Put(const uint8_t* hash, size_t bufsz, const char* buf) {
         unlink(cachefile_tmp.c_str());
         goto close_fds;
     }
-    if (verbose)
+    if (cacheVerbose)
         std::cerr << "writing to " << cachefile << "\n";
     if (rename(cachefile_tmp.c_str(), cachefile.c_str()) < 0) {
         unlink(cachefile_tmp.c_str());

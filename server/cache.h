@@ -6,16 +6,13 @@
 #include <utility>
 #include <vector>
 
-#include "config.h"
-
 namespace instrew {
 
 class Cache {
 public:
     static constexpr size_t HASH_SIZE = 20;
 
-    Cache() : allow_read(false), allow_write(false) {};
-    Cache(const InstrewConfig& instrew_cfg);
+    Cache();
     ~Cache();
 
     std::pair<int,size_t> Get(const uint8_t* hash); // returns fd (or -1) + size
@@ -26,7 +23,6 @@ private:
 
     bool allow_read;
     bool allow_write;
-    bool verbose;
     std::filesystem::path path;
 };
 
