@@ -1,0 +1,12 @@
+
+#include "version.h"
+
+#include <string_view>
+
+using namespace std::literals;
+
+namespace instrew {
+
+const std::string_view instrewVersion = "@VCS_TAG@"sv;
+
+}

@@ -5,6 +5,7 @@
 #include "connection.h"
 #include "instrew-server-config.h"
 #include "optimizer.h"
+#include "version.h"
 
 #include <rellume/rellume.h>
 
@@ -348,6 +349,9 @@ int main(int argc, char** argv) {
     llvm::cl::HideUnrelatedOptions({&InstrewCategory, &CodeGenCategory});
     auto& optionMap = llvm::cl::getRegisteredOptions();
     optionMap["time-passes"]->setHiddenFlag(llvm::cl::Hidden);
+    llvm::cl::SetVersionPrinter([](llvm::raw_ostream& os) {
+        os << "Instrew " << instrew::instrewVersion << "\n";
+    });
     llvm::cl::ParseCommandLineOptions(argc, argv);
 
     static const IWFunctions iwf = {

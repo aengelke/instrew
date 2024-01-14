@@ -18,7 +18,9 @@ client_bytes = custom_target('hex-client', output: 'client.inc', input: client,
                              capture: true,
                              command: [python3, '-c', pytobytes, '@INPUT@'])
 
-instrew = executable('instrew', sources, client_bytes,
+version = vcs_tag(input: 'version.cc.in', output: 'version.cc')
+
+instrew = executable('instrew', sources, version, client_bytes,
                      include_directories: include_directories('.', '../shared'),
                      dependencies: [librellume, libllvm, libcrypto],
                      link_args: ['-ldl'],
