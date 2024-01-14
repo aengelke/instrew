@@ -48,9 +48,5 @@ rellume = subproject('rellume')
 librellume = rellume.get_variable('librellume')
 
 subdir('client')
-
-subdir('tool-api')
 subdir('server')
-
-subdir('tools-simple')
 subdir('test')

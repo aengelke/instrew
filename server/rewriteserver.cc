@@ -6,7 +6,6 @@
 #include "instrew-server-config.h"
 #include "optimizer.h"
 
-#include <instrew-api.h>
 #include <rellume/rellume.h>
 
 #include <llvm/ADT/SmallVector.h>
@@ -56,87 +55,6 @@ static llvm::GlobalVariable* CreatePcBase(llvm::LLVMContext& ctx) {
     return pc_base_var;
 }
 
-static llvm::Function* CreateMarkerFn(llvm::LLVMContext& ctx) {
-    auto marker_fn_ty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
-                                                {llvm::Type::getInt64Ty(ctx)},
-                                                false);
-    return llvm::Function::Create(marker_fn_ty,
-                                  llvm::GlobalValue::ExternalLinkage,
-                                  "instrew_instr_marker");
-}
-
-
-class InstrumenterTool {
-private:
-    void* dl_handle;
-    void* tool_handle;
-    InstrewDesc desc;
-
-public:
-    InstrumenterTool() : dl_handle(nullptr), desc{} {}
-    ~InstrumenterTool() {
-        if (desc.finalize)
-            desc.finalize(tool_handle);
-        if (dl_handle)
-            dlclose(dl_handle);
-    }
-
-    int Init(const InstrewConfig& instrew_cfg, llvm::Module* mod) {
-        if (instrew_cfg.tool == "") {
-            desc.flags = INSTREW_DESC_OPTIMIZE | INSTREW_DESC_CACHABLE;
-            return 0;
-        }
-
-        std::string tool_lib = instrew_cfg.tool;
-        if (tool_lib.find('/') == std::string::npos) {
-            std::stringstream ss;
-            ss << INSTREW_TOOL_PATH << "/tool-" << instrew_cfg.tool << ".so";
-            tool_lib = ss.str();
-        }
-        dl_handle = dlopen(tool_lib.c_str(), RTLD_NOW);
-        if (!dl_handle) {
-            std::cerr << "error: could not open tool: " << dlerror() << std::endl;
-            return -ELIBBAD;
-        }
-        decltype(instrew_init_instrumenter)* tool_func;
-        *((void**) &tool_func) = dlsym(dl_handle, "instrew_init_instrumenter");
-        if (!tool_func) {
-            std::cerr << "error: could not open tool: " << dlerror() << std::endl;
-            return -ELIBBAD;
-        }
-
-        tool_handle = tool_func(instrew_cfg.tool.c_str(),
-                                llvm::wrap(mod), &desc);
-        if (desc.magic != 0xAEDB1000) {
-            std::cerr << "error: incompatible tool" << std::endl;
-            return -EINVAL;
-        }
-
-        return 0;
-    }
-
-    llvm::StringRef ConfigStr() {
-        if (desc.uuid == nullptr)
-            return "";
-        return desc.uuid;
-    }
-
-    llvm::Function* Instrument(llvm::Function* fn) {
-        if (!desc.instrument)
-            return fn;
-        LLVMValueRef new_fn = desc.instrument(tool_handle, llvm::wrap(fn));
-        return llvm::unwrap<llvm::Function>(new_fn);
-    }
-
-    bool Optimize() {
-        return !!(desc.flags & INSTREW_DESC_OPTIMIZE);
-    }
-    bool MarkInstrs() {
-        return !!(desc.flags & INSTREW_DESC_MARK_INSTRS);
-    }
-};
-
-
 struct IWState {
 private:
     IWConnection* iwc;
@@ -150,8 +68,6 @@ private:
     llvm::Constant* pc_base;
     llvm::SmallVector<llvm::Function*, 8> helper_fns;
     std::unique_ptr<llvm::Module> mod;
-
-    InstrumenterTool tool;
 
     Optimizer optimizer;
     llvm::SmallVector<char, 4096> obj_buffer;
@@ -242,7 +158,6 @@ public:
             mod->setOverrideStackAlignment(iwsc->tsc_stack_alignment);
 #endif
 
-        auto marker_fn = CreateMarkerFn(ctx);
 #if LL_LLVM_MAJOR < 17
         mod->getGlobalList().push_back(pc_base_var);
 #else
@@ -250,31 +165,13 @@ public:
 #endif
         for (const auto& helper_fn : helper_fns)
             mod->getFunctionList().push_back(helper_fn);
-        mod->getFunctionList().push_back(marker_fn);
-
-        if (tool.Init(instrew_cfg, mod.get()) != 0)
-            abort();
-        if (tool.MarkInstrs()) {
-            ll_config_set_instr_marker(rlcfg, llvm::wrap(marker_fn));
-        } else {
-            marker_fn->eraseFromParent();
-            marker_fn = nullptr;
-        }
 
         llvm::Type* i8p_ty = llvm::Type::getInt8PtrTy(ctx);
         llvm::SmallVector<llvm::Constant*, 8> used;
         used.push_back(pc_base_var);
 
-        // Rename all tool-defined functions appropriately.
-        uint64_t zval_cnt = 1ull << 63;
-        for (llvm::Function& fn : mod->functions()) {
+        for (llvm::Function& fn : mod->functions())
             used.push_back(llvm::ConstantExpr::getPointerCast(&fn, i8p_ty));
-            if (fn.hasExternalLinkage() && !fn.empty()) {
-                std::stringstream namebuf;
-                namebuf << "Z" << std::oct << zval_cnt++ << "_";
-                fn.setName(llvm::Twine(namebuf.str() + fn.getName()));
-            }
-        }
 
         llvm::ArrayType* used_ty = llvm::ArrayType::get(i8p_ty, used.size());
         llvm::GlobalVariable* llvm_used = new llvm::GlobalVariable(
@@ -303,8 +200,6 @@ public:
         SHA1_Update(&config_sha, &iwsc->tsc_host_cpu_features, sizeof iwsc->tsc_host_cpu_features);
         SHA1_Update(&config_sha, &iwsc->tsc_stack_alignment, sizeof iwsc->tsc_stack_alignment);
         SHA1_Update(&config_sha, &iwcc->tc_callconv, sizeof iwcc->tc_callconv);
-        llvm::StringRef tool_config = tool.ConfigStr();
-        SHA1_Update(&config_sha, tool_config.data(), tool_config.size());
         SHA1_Final(config_hash, &config_sha);
     }
     ~IWState() {
@@ -391,7 +286,6 @@ public:
             mod->print(llvm::errs(), nullptr);
 
         auto time_instrument_start = std::chrono::steady_clock::now();
-        fn = tool.Instrument(fn);
         fn = ChangeCallConv(fn, instrew_cc);
         if (instrew_cfg.dumpir & 2)
             mod->print(llvm::errs(), nullptr);

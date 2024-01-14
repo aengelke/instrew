@@ -20,6 +20,6 @@ client_bytes = custom_target('hex-client', output: 'client.inc', input: client,
 
 instrew = executable('instrew', sources, client_bytes,
                      include_directories: include_directories('.', '../shared'),
-                     dependencies: [librellume, libllvm, libcrypto, instrew_api],
+                     dependencies: [librellume, libllvm, libcrypto],
                      link_args: ['-ldl'],
                      install: true)
