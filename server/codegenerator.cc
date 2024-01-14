@@ -92,7 +92,7 @@ public:
             /*Features=*/"", /*Options=*/target_options,
             /*RelocModel=*/rm,
             /*CodeModel=*/cm,
-            /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(targetopt),
+            /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(unsigned(targetopt)),
             /*JIT=*/true
         ));
         if (!target) {
