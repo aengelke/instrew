@@ -777,6 +777,7 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
     case 66: nr = __NR_writev; goto native;
     case 67: nr = __NR_pread64; goto native;
     case 68: nr = __NR_pwrite64; goto native;
+    case 72: nr = __NR_pselect6; goto native;
     case 73: nr = __NR_ppoll; goto native;
     case 78: nr = __NR_readlinkat; goto native;
     case 80: // fstat
