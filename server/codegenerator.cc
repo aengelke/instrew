@@ -119,3 +119,14 @@ CodeGenerator::CodeGenerator(const IWServerConfig& sc, bool pic,
         : pimpl{std::make_unique<impl>(sc, pic, o)} {}
 CodeGenerator::~CodeGenerator() {}
 void CodeGenerator::GenerateCode(llvm::Module* m) { pimpl->GenerateCode(m); }
+
+void CodeGenerator::appendConfig(llvm::SmallVectorImpl<uint8_t>& buffer) const {
+    struct {
+        uint32_t version = 1;
+        uint32_t targetopt = targetopt;
+    } config;
+
+    std::size_t start = buffer.size();
+    buffer.resize_for_overwrite(buffer.size() + sizeof(config));
+    std::memcpy(&buffer[start], &config, sizeof(config));
+}

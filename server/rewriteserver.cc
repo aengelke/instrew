@@ -103,14 +103,34 @@ private:
     llvm::SmallVector<char, 4096> obj_buffer;
     CodeGenerator codegen;
 
-    uint8_t config_hash[SHA_DIGEST_LENGTH];
-    llvm::SmallVector<uint8_t, 256> range_buffer;
+    llvm::SmallVector<uint8_t, 256> hashBuffer;
 
     std::chrono::steady_clock::duration dur_predecode{};
     std::chrono::steady_clock::duration dur_lifting{};
     std::chrono::steady_clock::duration dur_instrument{};
     std::chrono::steady_clock::duration dur_llvm_opt{};
     std::chrono::steady_clock::duration dur_llvm_codegen{};
+
+    void appendConfig(llvm::SmallVectorImpl<uint8_t>& buffer) const {
+        struct {
+            uint32_t version = 2;
+            uint8_t safeCallRet = safeCallRet;
+            uint8_t enableCallret = enableCallret;
+            uint8_t enableFastcc = enableFastcc;
+            uint8_t enablePIC = enablePIC;
+
+            uint32_t guestArch;
+            uint32_t hostArch;
+            uint32_t stackAlignment;
+        } config;
+        config.guestArch = iwsc->tsc_guest_arch;
+        config.hostArch = iwsc->tsc_host_arch;
+        config.stackAlignment = iwsc->tsc_stack_alignment;
+
+        std::size_t start = buffer.size();
+        buffer.resize_for_overwrite(buffer.size() + sizeof(config));
+        std::memcpy(&buffer[start], &config, sizeof(config));
+    }
 
 public:
 
@@ -213,21 +233,9 @@ public:
             if (fn.hasExternalLinkage() && !fn.empty())
                 fn.deleteBody();
 
-        SHA_CTX config_sha;
-        SHA1_Init(&config_sha);
-        // XXX
-        // SHA1_Update(&config_sha, &cfg.targetopt, sizeof cfg.targetopt);
-        // SHA1_Update(&config_sha, &cfg.extrainstcombine, sizeof cfg.extrainstcombine);
-        // SHA1_Update(&config_sha, &cfg.safecallret, sizeof cfg.safecallret);
-        // SHA1_Update(&config_sha, &cfg.fullfacets, sizeof cfg.fullfacets);
-        // SHA1_Update(&config_sha, &cfg.callret, sizeof cfg.callret);
-        // SHA1_Update(&config_sha, &cfg.pic, sizeof cfg.pic);
-        SHA1_Update(&config_sha, &iwsc->tsc_guest_arch, sizeof iwsc->tsc_guest_arch);
-        SHA1_Update(&config_sha, &iwsc->tsc_host_arch, sizeof iwsc->tsc_host_arch);
-        SHA1_Update(&config_sha, &iwsc->tsc_host_cpu_features, sizeof iwsc->tsc_host_cpu_features);
-        SHA1_Update(&config_sha, &iwsc->tsc_stack_alignment, sizeof iwsc->tsc_stack_alignment);
-        SHA1_Update(&config_sha, &iwcc->tc_callconv, sizeof iwcc->tc_callconv);
-        SHA1_Final(config_hash, &config_sha);
+        appendConfig(hashBuffer);
+        optimizer.appendConfig(hashBuffer);
+        codegen.appendConfig(hashBuffer);
     }
     ~IWState() {
         if (enableProfiling) {
@@ -269,24 +277,28 @@ public:
             return;
         }
 
-        SHA_CTX sha;
-        SHA1_Init(&sha);
-        SHA1_Update(&sha, config_hash, sizeof config_hash);
-        // Non-PIC: store address, predecode only stores offsets to start addr.
-        uint64_t hash_addr = enablePIC ? 0 : addr;
-        SHA1_Update(&sha, &hash_addr, sizeof hash_addr);
+        size_t hashConfigEnd = hashBuffer.size();
+
+        // Store address only for non-PIC code, other addresses are relative.
+        uint64_t hashAddr = enablePIC ? 0 : addr;
+        hashBuffer.resize_for_overwrite(hashConfigEnd + sizeof(hashAddr));
+        memcpy(&hashBuffer[hashConfigEnd], &hashAddr, sizeof(hashAddr));
+
         const struct RellumeCodeRange* ranges = ll_func_ranges(rlfn);
         for (; ranges->start || ranges->end; ranges++) {
-            uint64_t rel_start = ranges->start - hash_addr;
+            uint64_t rel_start = ranges->start - hashAddr;
             uint64_t size = ranges->end - ranges->start;
-            SHA1_Update(&sha, &rel_start, sizeof rel_start);
-            SHA1_Update(&sha, &size, sizeof size);
-            range_buffer.resize_for_overwrite(size);
-            iw_readmem(iwc, ranges->start, ranges->end, range_buffer.data());
-            SHA1_Update(&sha, range_buffer.data(), size);
+
+            size_t bufEnd = hashBuffer.size();
+            hashBuffer.resize_for_overwrite(bufEnd + 2 * sizeof(uint64_t) + size);
+            memcpy(&hashBuffer[bufEnd], &rel_start, sizeof(uint64_t));
+            memcpy(&hashBuffer[bufEnd + sizeof(uint64_t)], &size, sizeof(uint64_t));
+            iw_readmem(iwc, ranges->start, ranges->end, &hashBuffer[bufEnd + 2 * sizeof(uint64_t)]);
         }
+
         uint8_t hash[SHA_DIGEST_LENGTH];
-        SHA1_Final(hash, &sha);
+        SHA1(hashBuffer.data(), hashBuffer.size(), hash);
+        hashBuffer.truncate(hashConfigEnd);
 
         if (iw_cache_probe(iwc, addr, hash)) {
             ll_func_dispose(rlfn);

@@ -15,6 +15,9 @@ public:
     ~CodeGenerator();
     void GenerateCode(llvm::Module* mod);
 
+    /// Dump code generator configuration into the buffer.
+    void appendConfig(llvm::SmallVectorImpl<uint8_t>& buffer) const;
+
 private:
     class impl;
     std::unique_ptr<impl> pimpl;

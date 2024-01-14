@@ -72,3 +72,13 @@ void Optimizer::Optimize(llvm::Function* fn) {
     // fpm.addPass(llvm::AAEvaluator());
     fpm.run(*fn, fam);
 }
+
+void Optimizer::appendConfig(llvm::SmallVectorImpl<uint8_t>& buffer) const {
+    struct {
+        uint32_t version = 1;
+    } config;
+
+    std::size_t start = buffer.size();
+    buffer.resize_for_overwrite(buffer.size() + sizeof(config));
+    std::memcpy(&buffer[start], &config, sizeof(config));
+}
