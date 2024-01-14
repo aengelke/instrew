@@ -291,7 +291,7 @@ public:
 
         const struct RellumeCodeRange* ranges = ll_func_ranges(rlfn);
         for (; ranges->start || ranges->end; ranges++) {
-            uint64_t rel_start = ranges->start - hashAddr;
+            uint64_t rel_start = ranges->start - addr;
             uint64_t size = ranges->end - ranges->start;
 
             size_t bufEnd = hashBuffer.size();
