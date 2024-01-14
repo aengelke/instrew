@@ -140,6 +140,11 @@ public:
         iwsc = iw_get_sc(iwc);
         iwcc = iw_get_cc(iwc);
 
+#ifndef NDEBUG
+        // Discard non-global value names in release builds.
+        ctx.setDiscardValueNames(true);
+#endif
+
         rlcfg = ll_config_new();
         ll_config_enable_verify_ir(rlcfg, verifyLiftedIR);
         ll_config_set_call_ret_clobber_flags(rlcfg, !safeCallRet);

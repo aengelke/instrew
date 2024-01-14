@@ -5,6 +5,7 @@ project('instrew', ['c', 'cpp'],
             'warning_level=3',
             'c_std=c11',
             'cpp_std=c++17',
+            'b_ndebug=if-release',
         ],
         meson_version: '>=0.52')
 
