@@ -9,6 +9,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Passes/StandardInstrumentations.h>
 #include <llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h>
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar.h>
@@ -34,6 +35,11 @@ void Optimizer::Optimize(llvm::Function* fn) {
     llvm::FunctionAnalysisManager fam{};
     llvm::CGSCCAnalysisManager cgam{};
     llvm::ModuleAnalysisManager mam{};
+    llvm::PassInstrumentationCallbacks pic{};
+    llvm::PrintIRInstrumentation pii{};
+
+    pii.registerCallbacks(pic);
+    fam.registerPass([&] { return llvm::PassInstrumentationAnalysis(&pic); });
 
     // Register the AA manager first so that our version is the one used.
     fam.registerPass([&] { return pb.buildDefaultAAPipeline(); });
@@ -59,9 +65,9 @@ void Optimizer::Optimize(llvm::Function* fn) {
     // with the default option, which brings useless "expensive combines" (they
     // were, thus, removed in later LLVM versions), but makes LLVM 11 work.
     fpm.addPass(llvm::InstCombinePass());
-    fpm.addPass(llvm::CorrelatedValuePropagationPass());
+    // fpm.addPass(llvm::CorrelatedValuePropagationPass());
     // if (instrew_cfg.extrainstcombine)
-    fpm.addPass(llvm::SimplifyCFGPass());
+    // fpm.addPass(llvm::SimplifyCFGPass());
     // fpm.addPass(llvm::AggressiveInstCombinePass());
     // fpm.addPass(llvm::ReassociatePass());
     // fpm.addPass(llvm::MergedLoadStoreMotionPass());
