@@ -322,7 +322,7 @@ public:
         }
 
         llvm::Function* fn = llvm::unwrap<llvm::Function>(fn_wrapped);
-        fn->setName("S0");
+        fn->setName("S0_" + llvm::Twine::utohexstr(addr));
         ll_func_dispose(rlfn);
 
         if (dumpIR.isSet(DumpIR::Lift))
