@@ -67,7 +67,7 @@ llvm::cl::opt<bool> enablePIC("pic", llvm::cl::desc("Compile code position-indep
 
 static llvm::Function* CreateFunc(llvm::LLVMContext& ctx,
                                   const std::string name) {
-    llvm::Type* sptr = llvm::Type::getInt8PtrTy(ctx, SPTR_ADDR_SPACE);
+    llvm::Type* sptr = llvm::PointerType::get(ctx, SPTR_ADDR_SPACE);
     llvm::Type* void_ty = llvm::Type::getVoidTy(ctx);
     auto* fn_ty = llvm::FunctionType::get(void_ty, {sptr}, false);
     auto linkage = llvm::GlobalValue::ExternalLinkage;
@@ -217,14 +217,14 @@ public:
         for (const auto& helper_fn : helper_fns)
             mod->getFunctionList().push_back(helper_fn);
 
-        llvm::Type* i8p_ty = llvm::Type::getInt8PtrTy(ctx);
         llvm::SmallVector<llvm::Constant*, 8> used;
         used.push_back(pc_base_var);
 
         for (llvm::Function& fn : mod->functions())
-            used.push_back(llvm::ConstantExpr::getPointerCast(&fn, i8p_ty));
+            used.push_back(&fn);
 
-        llvm::ArrayType* used_ty = llvm::ArrayType::get(i8p_ty, used.size());
+        llvm::Type* ptrTy = llvm::PointerType::get(ctx, 0);
+        llvm::ArrayType* used_ty = llvm::ArrayType::get(ptrTy, used.size());
         llvm::GlobalVariable* llvm_used = new llvm::GlobalVariable(
                 *mod, used_ty, /*const=*/false,
                 llvm::GlobalValue::AppendingLinkage,
