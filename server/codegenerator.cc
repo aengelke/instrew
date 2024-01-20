@@ -92,7 +92,11 @@ public:
             /*Features=*/"", /*Options=*/target_options,
             /*RelocModel=*/rm,
             /*CodeModel=*/cm,
+#if LL_LLVM_MAJOR < 18
             /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(unsigned(targetopt)),
+#else
+            /*OptLevel=*/llvm::CodeGenOpt::getLevel(targetopt).value_or(llvm::CodeGenOptLevel::Default),
+#endif
             /*JIT=*/true
         ));
         if (!target) {
