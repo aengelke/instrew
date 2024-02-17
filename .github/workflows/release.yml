@@ -1,0 +1,59 @@
+name: Release
+on: workflow_dispatch
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - name: install dependencies
+        run: apt update && apt install -y gnupg wget meson cmake pkg-config libssl-dev git clang
+      - name: install llvm
+        run: wget --no-check-certificate -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -;
+          echo 'deb http://apt.llvm.org/bookworm/   llvm-toolchain-bookworm-17  main' >> /etc/apt/sources.list;
+          apt update;
+          apt install -y llvm-17;
+          update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-17 17;
+      - name: checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: build release
+        run: mkdir build; meson build -Dbuildtype=release; ninja -C build
+      - name: test release
+        run: ninja -C build test
+      - name: bundle artifacts
+        run: tar -czf instrew-x86.tar.gz build/client build/server
+      - name: delete-previous-release
+        uses: dev-drprasad/delete-older-releases@v0.2.0
+        with:
+          keep_latest: 0
+          delete_tags: true
+          delete_tag_pattern: latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: latest_release
+          release_name: latest
+          draft: true
+          prerelease: false
+      - name: upload release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./instrew-x86.tar.gz
+          asset_name: instrew-x86.tar.gz
+          asset_content_type: application/gzip
+      - name: publish release
+        id: publish_release
+        uses: eregon/publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          release_id: ${{ steps.create_release.outputs.id }}
