@@ -1,52 +1,78 @@
 name: Release
 on: workflow_dispatch
 jobs:
-  release:
+  create-release:
     runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.id }}
+      release_url: ${{ steps.create.outputs.upload_url }}
+    steps: 
+      - name: create release
+        id: create
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: latest
+          release_name: latest
+          draft: true
+          prerelease: false
+  build:
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: ["amd64", "arm64/v8"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: true
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
       - name: build docker environment
         uses: docker/build-push-action@v5
         with:
           context: .
+          platforms: linux/${{ matrix.platform }}
           push: false
           tags: instrew-env
       - name: build instrew
         run: docker run --rm -v "$PWD"/:/instrew/ instrew-env
-      - name: bundle instrew
-        run: mv install instrew && tar -czf instrew-x86_64.tar.gz instrew
-      - name: create release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: generate artifact name
+        uses: mad9000/actions-find-and-replace-string@5
+        id: artifact-name
         with:
-          tag_name: latest_release
-          release_name: latest
-          draft: true
-          prerelease: false
+          source: instrew-${{ matrix.platform }}.tar.gz
+          find: '/'
+          replace: ''
+      - name: bundle instrew
+        run: mv install instrew && tar -czf ${{ steps.artifact-name.outputs.value }} instrew
       - name: upload release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./instrew-x86_64.tar.gz
-          asset_name: instrew-x86_64.tar.gz
+          upload_url: ${{ needs.create-release.outputs.release_url }}
+          asset_path: ./${{ steps.artifact-name.outputs.value }}
+          asset_name: ${{ steps.artifact-name.outputs.value }}
           asset_content_type: application/gzip
+  publish-release:
+    needs:
+      - create-release
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: delete-previous-release
+        uses: dev-drprasad/delete-older-releases@v0.2.0
+        with:
+          keep_latest: 0
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: publish release
         uses: eregon/publish-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          release_id: ${{ steps.create_release.outputs.id }}
-      - name: delete-previous-release
-        uses: dev-drprasad/delete-older-releases@v0.2.0
-        with:
-          keep_latest: 1
-          delete_tags: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          release_id: ${{ needs.create-release.outputs.release_id }}
