@@ -3,34 +3,21 @@ on: workflow_dispatch
 jobs:
   release:
     runs-on: ubuntu-latest
-    container: ubuntu:24.04
     steps:
-      - name: install dependencies
-        run: apt update && apt install -y gnupg wget meson cmake pkg-config libssl-dev git clang
-      - name: install llvm
-        run: wget --no-check-certificate -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -;
-          echo 'deb http://apt.llvm.org/bookworm/   llvm-toolchain-bookworm-17  main' >> /etc/apt/sources.list;
-          apt update;
-          apt install -y llvm-17;
-          update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-17 17;
-      - name: checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: true
-      - name: build release
-        run: mkdir build; meson build -Dbuildtype=release; ninja -C build
-      - name: test release
-        run: ninja -C build test
-      - name: bundle artifacts
-        run: tar -czf instrew-x86.tar.gz build/client build/server
-      - name: delete-previous-release
-        uses: dev-drprasad/delete-older-releases@v0.2.0
+      - name: build docker environment
+        uses: docker/build-push-action@v5
         with:
-          keep_latest: 0
-          delete_tags: true
-          delete_tag_pattern: latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          context: .
+          push: false
+          tags: instrew-env
+      - name: build instrew
+        run: docker run --rm -v "$PWD"/:/instrew/ instrew-env
+      - name: bundle instrew
+        run: mv install instrew && tar -czf instrew-x86_64.tar.gz instrew
       - name: create release
         id: create_release
         uses: actions/create-release@v1
@@ -47,13 +34,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./instrew-x86.tar.gz
-          asset_name: instrew-x86.tar.gz
+          asset_path: ./instrew-x86_64.tar.gz
+          asset_name: instrew-x86_64.tar.gz
           asset_content_type: application/gzip
       - name: publish release
-        id: publish_release
         uses: eregon/publish-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           release_id: ${{ steps.create_release.outputs.id }}
+      - name: delete-previous-release
+        uses: dev-drprasad/delete-older-releases@v0.2.0
+        with:
+          keep_latest: 1
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
