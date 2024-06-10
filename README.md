@@ -9,11 +9,13 @@ Instrew is a performance-targeted transparent dynamic binary translator(/instrum
 After cloning and checking out submodules, compile Instrew as follows:
 
 ```
-mkdir build
-meson build -Dbuildtype=release
-ninja -C build
-# optionally, run tests
-ninja -C build test
+./build.sh
+```
+
+If your build has dependency issues, consider using the provided dockerfile
+```
+docker build . --tag instrew-env # run once
+docker run --rm -v "$PWD"/:/instrew instrew-env # run to build instrew
 ```
 
 Afterwards, you can run an application with Instrew. Statically linked applications often have a significantly lower translation time. New glibc versions often tend to use recent syscalls that are not yet supported, therefore warnings about missing system calls can sometimes be ignored.
