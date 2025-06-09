@@ -1,0 +1,43 @@
+name: Alpine Test CI
+
+on:
+  push:
+    branches:
+    - "tmp-host-riscv64"
+
+jobs:
+  build:  
+    runs-on: ubuntu-latest
+    # defaults:
+    #   run:
+    #     shell: alpine.sh {0}
+    steps:
+      - name: Update & Upgrade
+        run: sudo apt update && sudo apt upgrade --yes
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+      - name: Setup Alpine Linux v3.21 for riscv64
+        uses: jirutka/setup-alpine@v1
+        with: 
+          arch: riscv64
+          branch: v3.21
+
+      - name: Run script inside Alpine chroot with riscv64 emulation
+        run: uname -m
+        shell: alpine.sh {0}
+      - name: Install dependencies
+        run: | 
+          apk add build-base gcc g++ cmake meson llvm18-dev clang18-dev lld18-dev pkgconf libressl-dev
+          ln -s /usr/bin/clang-18 /usr/bin/clang
+        shell: alpine.sh --root {0}
+      - name: Build
+        run: | 
+          meson setup build/ -Dbuildtype=release
+          ninja -C build
+          ninja -C build test
+          cat build/meson-logs/meson-log.txt
+        shell: alpine.sh {0}
+
+

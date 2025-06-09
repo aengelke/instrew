@@ -248,6 +248,9 @@ handle_clone(struct State* state, struct clone_args* uargs, size_t usize) {
     // clone(flags, stack, parent_tid, tls, child_tid)
     ssize_t res = syscall(__NR_clone, flags, 0, args.parent_tid, args.tls,
                           args.child_tid, 0);
+#elif defined(__riscv)
+    ssize_t res = syscall(__NR_clone, flags, 0, args.parent_tid, args.tls,
+                          args.child_tid, 0);
 #else
 #error "clone not implemented for target"
 #endif
@@ -448,15 +451,20 @@ emulate_syscall(uint64_t* cpu_regs) {
     case 230: nr = __NR_clock_nanosleep; goto native;
     case 257: goto common_openat;
     case 260: nr = __NR_fchownat; goto native;
+    case 263: nr = __NR_unlinkat; goto native;
+    case 267: nr = __NR_readlinkat; goto native;
     case 268: nr = __NR_fchmodat; goto native;
+    case 269: nr = __NR_faccessat; goto native;
     case 270: nr = __NR_pselect6; goto native;
     case 271: nr = __NR_ppoll; goto native;
     case 273: nr = __NR_set_robust_list; goto native;
     case 274: nr = __NR_get_robust_list; goto native;
+    case 280: nr = __NR_utimensat; goto native;
     case 292: nr = __NR_dup3; goto native;
     case 293: nr = __NR_pipe2; goto native;
     case 302: nr = __NR_prlimit64; goto native;
     case 318: nr = __NR_getrandom; goto native;
+    case 439: nr = __NR_faccessat2; goto native;
 
     // Some are too old to work on newer platforms, but have replacements.
     case 2: // open
@@ -474,7 +482,11 @@ emulate_syscall(uint64_t* cpu_regs) {
         res = syscall(__NR_pipe2, arg0, 0, 0, 0, 0, 0);
         break;
     case 82: // rename
+#ifdef __riscv
+	res = syscall(__NR_renameat2, AT_FDCWD, arg0, AT_FDCWD, arg1, 0, 0);
+#else
         res = syscall(__NR_renameat, AT_FDCWD, arg0, AT_FDCWD, arg1, 0, 0);
+#endif
         break;
     case 83: // mkdir
         res = syscall(__NR_mkdirat, AT_FDCWD, arg0, arg1, 0, 0, 0);
@@ -751,7 +763,18 @@ emulate_syscall_generic(struct CpuState* cpu_state, uint64_t* resp, uint64_t nr,
         }
     case 29: nr = __NR_ioctl; goto native; // TODO: catch dangerous commands
     case 35: nr = __NR_unlinkat; goto native;
-    case 38: nr = __NR_renameat; goto native;
+    case 38: 
+#ifdef __riscv
+#ifdef SYS_renameat
+	nr = SYS_renameat;
+#else
+	nr = __NR_renameat2;
+	arg5 = 0;
+#endif
+#else
+	nr = __NR_renameat; 
+#endif
+	goto native;
     case 46: nr = __NR_ftruncate; goto native;
     case 48: nr = __NR_faccessat; goto native;
     case 49: nr = __NR_chdir; goto native;

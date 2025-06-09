@@ -14,6 +14,12 @@
 
 // Prototype to make compilers happy. This is used in the assembly HHVM
 // dispatcher on x86-64 below.
+
+// #define DISPATCH_DEBUG
+
+#if defined DISPATCH_DEBUG
+static uint64_t hunk_count = 0;
+#endif
 uintptr_t resolve_func(struct CpuState*, uintptr_t, struct RtldPatchData*);
 
 static void
@@ -119,6 +125,10 @@ inline void dispatch_cdecl(uint64_t* cpu_regs) {
     uintptr_t addr = cpu_regs[0];
     uintptr_t hash = QUICK_TLB_HASH(addr);
 
+#if defined DISPATCH_DEBUG
+	printf("hunk: %u\n", hunk_count);
+	hunk_count++;
+#endif
     uintptr_t func = cpu_state->quick_tlb[hash][1];
     if (UNLIKELY(cpu_state->quick_tlb[hash][0] != addr))
         func = resolve_func(cpu_state, addr, NULL);

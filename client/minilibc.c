@@ -282,6 +282,154 @@ get_thread_area(void) {
     return tp;
 }
 
+#elif defined(__riscv)
+#define R_RELATIVE R_RISCV_RELATIVE
+
+//TODO: maybe put this def to common?
+#ifndef SA_RESTORER
+#define SA_RESTORER 0x04000000
+#endif
+
+ASM_BLOCK(
+    .text;
+    .type _start, %function;
+    .weak _DYNAMIC;
+    .hidden _DYNAMIC;
+    .globl _start;
+_start:
+    mv fp, x0;
+    mv a0, sp;
+    lla a1, _DYNAMIC;
+    andi sp, sp, 0xfffffffffffffff0;
+    jal __start_main;
+);
+
+ASM_BLOCK(
+    .global __clone;
+    .type  __clone, %function;
+__clone:
+      // Save func and arg to stack
+        addi a1, a1, -16;
+        sd a0, 0(a1);
+        sd a3, 8(a1);
+
+      // Call SYS_clone
+        mv a0, a2;
+        mv a2, a4;
+        mv a3, a5;
+        mv a4, a6;
+        li a7, 220; // SYS_clone
+        ecall;
+
+        beqz a0, 1f;
+      // Parent
+        ret;
+
+      // Child
+1:      ld a1, 0(sp);
+        ld a0, 8(sp);
+        jalr a1;
+
+      // Exit
+        li a7, 93; // SYS_exit
+        ecall;
+);
+
+ASM_BLOCK(
+    .globl __restore;
+    .type __restore, %function;
+__restore:
+    li a0, __NR_rt_sigreturn;
+    ecall;
+);
+
+static size_t syscall0(int n)
+{
+	register size_t a7 __asm__("a7") = n;
+	register size_t a0 __asm__("a0");
+	__asm__ volatile ("ecall\n\t" : "+r"(a0) : "r"(a7) : "memory");
+	return a0;
+}
+
+static size_t syscall1(int n, size_t a)
+{
+	register size_t a7 __asm__("a7") = n;
+	register size_t a0 __asm__("a0") = a;
+	__asm__ volatile ("ecall\n\t" : "+r"(a0) : "r"(a7), "0"(a0) : "memory");
+	return a0;
+}
+
+static size_t syscall2(int n, size_t a, size_t b)
+{
+	register size_t a7 __asm__("a7") = n;
+	register size_t a0 __asm__("a0") = a;
+	register size_t a1 __asm__("a1") = b;
+	__asm__ volatile ("ecall\n\t" : "+r"(a0) : "r"(a7), "0"(a0), "r"(a1) : "memory");
+	return a0;
+}
+
+static size_t syscall3(int n, size_t a, size_t b, size_t c)
+{
+	register size_t a7 __asm__("a7") = n;
+	register size_t a0 __asm__("a0") = a;
+	register size_t a1 __asm__("a1") = b;
+	register size_t a2 __asm__("a2") = c;
+	__asm__ volatile ("ecall\n\t" : "+r"(a0) : "r"(a7), "0"(a0), "r"(a1), "r"(a2) : "memory");
+	return a0;
+}
+
+static size_t syscall4(int n, size_t a, size_t b, size_t c, size_t d)
+{
+	register size_t a7 __asm__("a7") = n;
+	register size_t a0 __asm__("a0") = a;
+	register size_t a1 __asm__("a1") = b;
+	register size_t a2 __asm__("a2") = c;
+	register size_t a3 __asm__("a3") = d;
+	__asm__ volatile ("ecall\n\t" : "+r"(a0) : "r"(a7), "0"(a0), "r"(a1), "r"(a2), "r"(a3) : "memory");
+	return a0;
+}
+
+static size_t syscall5(int n, size_t a, size_t b, size_t c, size_t d, size_t e)
+{
+	register size_t a7 __asm__("a7") = n;
+	register size_t a0 __asm__("a0") = a;
+	register size_t a1 __asm__("a1") = b;
+	register size_t a2 __asm__("a2") = c;
+	register size_t a3 __asm__("a3") = d;
+	register size_t a4 __asm__("a4") = e;
+	__asm__ volatile ("ecall\n\t" : "+r"(a0) : "r"(a7), "0"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(a4) : "memory");
+	return a0;
+}
+
+static size_t syscall6(int n, size_t a, size_t b, size_t c, size_t d, size_t e, size_t f)
+{
+	register size_t a7 __asm__("a7") = n;
+	register size_t a0 __asm__("a0") = a;
+	register size_t a1 __asm__("a1") = b;
+	register size_t a2 __asm__("a2") = c;
+	register size_t a3 __asm__("a3") = d;
+	register size_t a4 __asm__("a4") = e;
+	register size_t a5 __asm__("a5") = f;
+	__asm__ volatile ("ecall\n\t" : "+r"(a0) : "r"(a7), "0"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a5) : "memory");
+	return a0;
+}
+
+int
+set_thread_area(void* tp) {
+    __asm__ volatile ("mv %0, a0\n\t"
+		      "li a0, 0\r\n" :: "r"(tp) : "memory");
+    return 0;
+}
+
+void* get_thread_area(void) {
+#ifdef SYS_set_thread_area
+    void* tp;
+    syscall1(SYS_set_thread_area, tp);
+#else
+    return (void*)-ENOSYS;
+#endif
+}
+
 #else
 #error
 #endif
@@ -740,7 +888,9 @@ sigaction(int num, const struct sigaction* restrict act,
     if (act) {
         kact = *act;
         kact.sa_flags |= SA_RESTORER;
-        kact.sa_restorer = __restore;
+#ifndef __riscv
+	kact.sa_restorer = __restore;
+#endif
         act = &kact;
     }
     return syscall4(__NR_rt_sigaction, num, (uintptr_t) act, (uintptr_t) oact,
@@ -774,7 +924,9 @@ size_t getpagesize(void) {
 }
 
 // May be overriden by an architecture-specific implementation.
+#ifndef __riscv
 __attribute__((weak)) GNU_FORCE_EXTERN
+#endif
 void* memset(void* s, int c, size_t n) {
     unsigned char* sptr = s;
     for (; n > 0; n--, sptr++)

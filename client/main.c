@@ -54,6 +54,8 @@ int main(int argc, char** argv) {
     state.tsc.tsc_stack_alignment = 8;
 #elif defined(__aarch64__)
     state.tsc.tsc_host_arch = EM_AARCH64;
+#elif defined(__riscv)
+    state.tsc.tsc_host_arch = EM_RISCV;
 #else
 #error "Unsupported architecture!"
 #endif

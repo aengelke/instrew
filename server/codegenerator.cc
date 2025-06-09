@@ -68,6 +68,10 @@ public:
             // The AArch64 target doesn't support the medium code model.
             cm = pic ? llvm::CodeModel::Large : llvm::CodeModel::Small;
             break;
+	case EM_RISCV:
+	    triple = "riscv64-unknown-linux-gnu";
+	    cm = pic ? llvm::CodeModel::Medium : llvm::CodeModel::Small;
+	    break;
         default:
             std::cerr << "unknown host architecture" << std::endl;
             abort();

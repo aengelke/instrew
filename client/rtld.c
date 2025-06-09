@@ -21,12 +21,18 @@
 #define EM_CURRENT EM_X86_64
 #elif defined(__aarch64__)
 #define EM_CURRENT EM_AARCH64
+#elif defined(__riscv)
+#define EM_CURRENT EM_RISCV
+#else
+#error
 #endif
 #define elf_check_arch(x) ((x)->e_machine == EM_CURRENT)
 
 #define CHECK_SIGNED_BITS(val,bits) \
             ((val) >= -(1ll << (bits-1)) && (val) < (1ll << (bits-1))-1)
 #define CHECK_UNSIGNED_BITS(val,bits) ((val) < (1ull << (bits))-1)
+
+// #define RTLD_DEBUG
 
 static bool
 rtld_elf_signed_range(int64_t val, unsigned bits, const char* relinfo) {
@@ -86,6 +92,8 @@ static const struct PltEntry plt_entries[] = {
 #define PLT_FUNC_SIZE 8
 #elif defined(__aarch64__)
 #define PLT_FUNC_SIZE 8
+#elif defined(__riscv)
+#define PLT_FUNC_SIZE 16
 #else
 #error "currently unsupported architecture"
 #endif
@@ -117,6 +125,11 @@ plt_create(const struct DispatcherInfo* disp_info, void** out_plt) {
 #elif defined(__aarch64__)
         *((uint32_t*) code_ptr+0) = 0x58000011 | (offset << 3); // ldr x17, [pc+off]
         *((uint32_t*) code_ptr+1) = 0xd61f0220; // br x17
+#elif defined(__riscv)
+		*((uint32_t*) code_ptr+0) = 0x00000297 | ((offset + 0x800) & 0xfffff000); // auipc, t0, offset[31:12]
+		*((uint32_t*) code_ptr+1) = 0x0002b283 | (offset << 20); // ld t0, offset[11:0](t0)
+		*((uint32_t*) code_ptr+2) = 0x00028067; // jalr, x0, 0(t0)
+		*((uint32_t*) code_ptr+3) = 0x00000013; // nop
 #else
 #error
 #endif // defined(__x86_64__)
@@ -162,6 +175,7 @@ rtld_patch_create_stub(Rtld* rtld, const struct RtldPatchData* patch_data,
     if (!rtld_elf_signed_range(jmptgtdiff - 4, 28, "R_AARCH64_JUMP26"))
         return -EINVAL;
     rtld_blend(stcode + 4, 0x03ffffff, (jmptgtdiff - 4) >> 2);
+#elif defined(__riscv)
 #else
 #error "missing patch stub"
 #endif
@@ -341,11 +355,20 @@ rtld_elf_add_stub(uintptr_t sym, uintptr_t* out_stub) {
 }
 #endif
 
+struct RtldPendingReloc {
+	struct RtldPatchData patch_data;
+	int64_t sym;
+};
+
 static int
-rtld_reloc_at(const struct RtldPatchData* patch_data, void* tgt, void* sym) {
+rtld_reloc_at(struct RtldPatchData* patch_data, void* tgt, void* sym, struct RtldPendingReloc **pending_relocs, uint64_t *pending_relocs_length) {
     uint64_t syma = (uintptr_t) sym + patch_data->addend;
     uint64_t pc = patch_data->patch_addr;
     int64_t prel_syma = syma - (int64_t) pc;
+
+#if defined RTLD_DEBUG
+	printf("rel: %u, tgt: %p, sym: %p, addend: %p, syma: %p, pc: %p, prel_syma: %p\n", patch_data->rel_type, *(uint64_t*)tgt,(uintptr_t)sym, patch_data->addend, syma, pc, prel_syma);
+#endif
 
     switch (patch_data->rel_type) {
 #if defined(__x86_64__)
@@ -437,14 +460,97 @@ rtld_reloc_at(const struct RtldPatchData* patch_data, void* tgt, void* sym) {
     case R_AARCH64_MOVW_UABS_G3:
         rtld_blend(tgt, 0xffff << 5, syma >> 48 << 5);
         break;
+#elif defined(__riscv)
+	case R_RISCV_32_PCREL:
+        if (!rtld_elf_signed_range(prel_syma, 32, "R_RISCV_32_PCREL"))
+			return -EINVAL;
+		rtld_blend(tgt, 0xffffffff, prel_syma);
+		break;
+	case R_RISCV_ADD32:
+		*((uint32_t*)tgt) += (uint32_t) syma;
+		break;
+	case R_RISCV_SUB32:
+		*((uint32_t*)tgt) -= (uint32_t) syma;
+		break;
+	case R_RISCV_CALL_PLT:
+	    if (!rtld_elf_signed_range(prel_syma, 32, "R_RISCV_CALL_PLT"))
+			return -EINVAL;
+		rtld_blend(tgt + 4, 0xfff00000 , prel_syma << 20);
+		rtld_blend(tgt, 0xfffff000, prel_syma + 0x800);
+		break;
+	case R_RISCV_SET6:
+		rtld_blend(tgt, 0x3f, syma);
+		break;
+	case R_RISCV_SUB6:
+//		uint8_t *res = *((uint8_t*)tgt);
+//		*res = (res - ((uint8_t)syma & 0x3f)) & 0x3f;
+		*((uint8_t*)tgt) = (*(uint8_t*)tgt - ((uint8_t)syma & 0x3f)) & 0x3f;
+		break;
+	case R_RISCV_SET8:
+		rtld_blend(tgt, 0xff, syma);
+		break;
+	case R_RISCV_SUB8:
+		*((uint8_t*)tgt) -= (uint8_t)syma;
+		break;
+	case R_RISCV_SET16:
+		rtld_blend(tgt, 0xffff, syma);
+		break;
+	case R_RISCV_SUB16:
+		*((uint16_t*)tgt) -= (uint16_t)syma;
+		break;
+	case R_RISCV_PCREL_HI20:
+		if (!rtld_elf_signed_range(prel_syma, 32, "R_RISCV_PCREL_HI20"))
+			return -EINVAL;
+		rtld_blend(tgt, 0xfffff000, (prel_syma & 0x800) & 0xfffff000);
+
+		struct RtldPendingReloc *pcrel_hi20_reloc = mem_alloc_data(sizeof(struct RtldPendingReloc), getpagesize());
+		pcrel_hi20_reloc->patch_data = *patch_data;
+		pcrel_hi20_reloc->sym = (int64_t)prel_syma;
+
+		pending_relocs[0] = pcrel_hi20_reloc;
+		(*pending_relocs_length)++;
+		break;
+	case R_RISCV_PCREL_LO12_I:
+		if (!rtld_elf_signed_range(prel_syma, 32, "R_RISCV_PCREL_LO12_I"))
+			return -EINVAL;
+
+		if (pending_relocs && pending_relocs_length) {
+#if defined RTLD_DEBUG
+			printf("pending_relocs != 0, pending_relocs_length != 0\n");
+#endif
+			for (int i = *pending_relocs_length; i >= 0; i--) {
+				if (!pending_relocs[i])
+					continue;
+#if defined RTLD_DEBUG
+				printf("pending_relocs[i] != 0, rel_type = %u\n", pending_relocs[i]->patch_data.rel_type);
+#endif
+				if (pending_relocs[i]->patch_data.rel_type == R_RISCV_PCREL_HI20 && pending_relocs[i]->patch_data.patch_addr == (uintptr_t)sym) {
+#if defined RTLD_DEBUG
+					printf("pending_relocs == R_RISCV_PCREL_HI20\n");
+#endif
+					prel_syma = pending_relocs[i]->sym;
+				}
+			}
+		} else {
+#if defined RTLD_DEBUG
+			printf("!pending_relocs\n");
+#endif
+		}
+		rtld_blend(tgt, 0xfff00000, (prel_syma & 0xfff) << 20 );
+		break;
 #endif
     default:
         dprintf(2, "unhandled relocation %u\n", patch_data->rel_type);
         return -EINVAL;
     }
 
+#if defined RTLD_DEBUG
+	printf("tgt after: %p\n", *(uint64_t*)tgt);
+#endif
     return 0;
 }
+
+
 
 static int
 rtld_elf_process_rela(RtldElf* re, int rela_idx) {
@@ -469,6 +575,13 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
 
     unsigned symtab_idx = rela_shdr->sh_link;
 
+	size_t pending_relocs_count = rela_shdr->sh_size / sizeof(Elf64_Rela);
+#if defined RTLD_DEBUG
+	printf("rela_shdr->sh_size: %u\n", pending_relocs_count);
+#endif
+	struct RtldPendingReloc **pending_relocs = mem_alloc_data(pending_relocs_count * sizeof(struct RtldPendingReloc*), getpagesize());
+	uint64_t pending_relocs_length = 0;
+
     for (; elf_rela != elf_rela_end; ++elf_rela) {
         // TODO: ensure that size doesn't overflow
         if (elf_rela->r_offset >= tgt_shdr->sh_size)
@@ -487,7 +600,8 @@ rtld_elf_process_rela(RtldElf* re, int rela_idx) {
             return -EINVAL;
 
         uint8_t* tgt = sec_write_addr + elf_rela->r_offset;
-        int retval = rtld_reloc_at(&reloc_patch, tgt, (void*) sym);
+
+        int retval = rtld_reloc_at(&reloc_patch, tgt, (void*) sym, pending_relocs, &pending_relocs_length);
         if (retval < 0)
             return retval;
     }
@@ -658,8 +772,8 @@ int rtld_add_object(Rtld* r, void* obj_base, size_t obj_size, uint64_t skew) {
     size_t totalign = 1;
     for (i = 0, elf_shnt = re.re_shdr; i < re.re_ehdr->e_shnum; i++, elf_shnt++) {
         // We don't support more flags
-        if (elf_shnt->sh_flags & ~(SHF_ALLOC|SHF_EXECINSTR|SHF_MERGE|SHF_STRINGS|SHF_INFO_LINK)) {
-            dprintf(2, "unsupported section flags\n");
+        if (elf_shnt->sh_flags & ~(SHF_ALLOC|SHF_EXECINSTR|SHF_MERGE|SHF_STRINGS|SHF_INFO_LINK|SHF_WRITE)) {
+            dprintf(2, "unsupported section flags: %p\n", elf_shnt->sh_flags);
             return -EINVAL;
         }
         if (elf_shnt->sh_flags & SHF_ALLOC) {
@@ -796,6 +910,6 @@ rtld_patch(struct RtldPatchData* patch_data, void* sym) {
     if (patch_data->rel_size > sizeof reloc_buf)
         return;
     memcpy(reloc_buf, (void*) patch_data->patch_addr, patch_data->rel_size);
-    (void) rtld_reloc_at(patch_data, reloc_buf, sym);
+    (void) rtld_reloc_at(patch_data, reloc_buf, sym, NULL, NULL);
     mem_write_code((void*) patch_data->patch_addr, reloc_buf, patch_data->rel_size);
 }

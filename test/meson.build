@@ -35,7 +35,7 @@ foreach arch : ['aarch64', 'riscv64', 'x86_64']
                          depfile: name + '.d',
                          command: testcc + ['-MD', '-MF', '@DEPFILE@', '-o', '@OUTPUT@', '@INPUT@'] + case.get('compile_args', []))
     test(name, instrew, suite: [arch],
-         args: case.get('instrew_args', []) + [exec] + case.get('args', []),
+         args: case.get('instrew_args', []) + ['--stub=' + client.path()] + [exec] + case.get('args', []),
          should_fail: case.get('should_fail', false))
   endforeach
 endforeach
