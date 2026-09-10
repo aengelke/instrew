@@ -3,6 +3,7 @@
 
 #include "config.h"
 
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IRBuilder.h>
@@ -228,13 +229,11 @@ struct CCState {
             irb.SetInsertPoint(call->getParent(), ++call->getIterator());
         else
             irb.SetInsertPoint(&nfn->getEntryBlock(), nfn->getEntryBlock().getFirstInsertionPt());
-        unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
         for (unsigned i = 0; i < fields.size(); i++) {
             llvm::Value* val = GetValue(fields[i], call, irb);
             llvm::Type* i8 = irb.getInt8Ty();
             llvm::Value* gep = irb.CreateConstGEP1_64(i8, sptr, fields[i].offset);
-            llvm::Type* ptr_ty = val->getType()->getPointerTo(sptr_as);
-            irb.CreateStore(val, irb.CreatePointerCast(gep, ptr_ty));
+            irb.CreateStore(val, gep);
         }
     }
 
@@ -308,8 +307,7 @@ struct CCState {
             // Need to load
             llvm::Type* i8 = irb.getInt8Ty();
             llvm::Value* gep = irb.CreateConstGEP1_64(i8, sptr, fields[i].offset);
-            llvm::Value* ptr = irb.CreatePointerCast(gep, elem_ty->getPointerTo(sptr_as));
-            vals[i] = irb.CreateLoad(elem_ty, ptr);
+            vals[i] = irb.CreateLoad(elem_ty, gep);
         }
 
         if (auto call = llvm::dyn_cast<llvm::CallInst>(callret)) {

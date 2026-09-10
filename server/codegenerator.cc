@@ -56,15 +56,15 @@ public:
             target_options.StackAlignmentOverride = server_config.tsc_stack_alignment;
 #endif
 
-        std::string triple;
+        std::string triple_str;
         llvm::CodeModel::Model cm;
         switch (server_config.tsc_host_arch) {
         case EM_X86_64:
-            triple = "x86_64-unknown-linux-gnu";
+            triple_str = "x86_64-unknown-linux-gnu";
             cm = pic ? llvm::CodeModel::Medium : llvm::CodeModel::Small;
             break;
         case EM_AARCH64:
-            triple = "aarch64-unknown-linux-gnu";
+            triple_str = "aarch64-unknown-linux-gnu";
             // The AArch64 target doesn't support the medium code model.
             cm = pic ? llvm::CodeModel::Large : llvm::CodeModel::Small;
             break;
@@ -80,6 +80,7 @@ public:
             rm = llvm::Reloc::PIC_;
 
         std::string error;
+        llvm::Triple triple(triple_str);
         const llvm::Target* the_target = llvm::TargetRegistry::lookupTarget(triple, error);
         if (!the_target) {
             std::cerr << "could not get target: " << error << std::endl;

@@ -30,8 +30,8 @@ endif
 if host_machine.cpu_family() == 'x86_64'
   if cc.has_argument('-mpreferred-stack-boundary=3') # GCC
     client_c_args += ['-mpreferred-stack-boundary=3']
-  elif cc.has_argument('-mstack-alignment=3') # Clang
-    client_c_args += ['-mstack-alignment=3']
+  elif cc.has_argument('-mstack-alignment=8') # Clang
+    client_c_args += ['-mstack-alignment=8']
   else
     error('could not lower stack aligment')
   endif
