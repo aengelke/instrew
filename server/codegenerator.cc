@@ -50,11 +50,6 @@ public:
 
         llvm::TargetOptions target_options;
         target_options.EnableFastISel = targetopt == 0; // Use FastISel for CodeGenOpt::None
-#if LL_LLVM_MAJOR < 13
-        // In LLVM13+, Module::setOverrideStackAlignment is used instead.
-        if (server_config.tsc_stack_alignment != 0)
-            target_options.StackAlignmentOverride = server_config.tsc_stack_alignment;
-#endif
 
         std::string triple_str;
         llvm::CodeModel::Model cm;
@@ -92,11 +87,7 @@ public:
             /*Features=*/"", /*Options=*/target_options,
             /*RelocModel=*/rm,
             /*CodeModel=*/cm,
-#if LL_LLVM_MAJOR < 18
-            /*OptLevel=*/static_cast<llvm::CodeGenOpt::Level>(unsigned(targetopt)),
-#else
             /*OptLevel=*/llvm::CodeGenOpt::getLevel(targetopt).value_or(llvm::CodeGenOptLevel::Default),
-#endif
             /*JIT=*/true
         ));
         if (!target) {
@@ -127,7 +118,7 @@ void CodeGenerator::GenerateCode(llvm::Module* m) { pimpl->GenerateCode(m); }
 void CodeGenerator::appendConfig(llvm::SmallVectorImpl<uint8_t>& buffer) const {
     struct {
         uint32_t version = 1;
-        uint32_t targetopt = targetopt;
+        uint32_t targetopt = ::targetopt;
     } config;
 
     std::size_t start = buffer.size();

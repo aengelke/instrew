@@ -18,9 +18,5 @@ PLT_ENTRY("fmaf", fmaf) // math.c
 PLT_ENTRY("fma", fma) // math.c
 PLT_ENTRY("instrew_tail_cdecl", dispatch_cdecl) // dispatch.c
 PLT_ENTRY("instrew_call_cdecl", dispatch_cdecl) // dispatch.c
-#if defined(__x86_64__)
-PLT_ENTRY("instrew_tail_hhvm", dispatch_hhvm_tail) // dispatch.c
-PLT_ENTRY("instrew_call_hhvm", dispatch_hhvm_tail) // dispatch.c
-#endif // defined(__x86_64__)
 PLT_ENTRY("memset", memset) // minilibc.c
 PLT_ENTRY("dprintf", dprintf) // minilibc.c

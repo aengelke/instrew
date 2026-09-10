@@ -12,7 +12,7 @@
 #include <translator.h>
 
 
-// Prototype to make compilers happy. This is used in the assembly HHVM
+// Prototype to make compilers happy. This is used in the assembly regcall
 // dispatcher on x86-64 below.
 uintptr_t resolve_func(struct CpuState*, uintptr_t, struct RtldPatchData*);
 
@@ -136,10 +136,6 @@ dispatch_cdecl_loop(uint64_t* cpu_regs) {
 
 #ifdef __x86_64__
 
-__attribute__((noreturn)) extern void dispatch_hhvm(uint64_t* cpu_state);
-void dispatch_hhvm_tail();
-void dispatch_hhvm_fullresolve();
-
 __attribute__((noreturn)) extern void dispatch_regcall(uint64_t* cpu_state);
 void dispatch_regcall_tail();
 void dispatch_regcall_fullresolve();
@@ -147,111 +143,6 @@ void dispatch_regcall_fullresolve();
 #define QUICK_TLB_OFFSET_ASM(dest_reg, addr_reg) \
         lea dest_reg, [addr_reg * 4]; \
         and dest_reg, ((1 << QUICK_TLB_BITS) - 1) << (2 + QUICK_TLB_BITOFF);
-
-ASM_BLOCK(
-    .intel_syntax noprefix;
-
-    // Stores result in r14, preserves all other registers
-    .align 16;
-    .type dispatch_hhvm_fullresolve, @function;
-dispatch_hhvm_fullresolve: // stack alignment: cdecl
-    // Save all cdecl caller-saved registers.
-    push rax;
-    push rcx;
-    push rdx;
-    push rsi;
-    push rdi;
-    push r8;
-    push r9;
-    push r10;
-    push r11;
-    mov rdi, [r12 - CPU_STATE_REGDATA_OFFSET]; // cpu_state
-    mov rsi, rbx; // addr
-    mov rdx, r14; // patch data
-    call resolve_func;
-    mov r14, rax; // return value
-    // Restore callee-saved registers.
-    pop r11;
-    pop r10;
-    pop r9;
-    pop r8;
-    pop rdi;
-    pop rsi;
-    pop rdx;
-    pop rcx;
-    pop rax;
-    jmp r14;
-    .size dispatch_hhvm_fullresolve, .-dispatch_hhvm_fullresolve;
-
-    .align 16;
-    .global dispatch_hhvm_tail;
-    .type dispatch_hhvm_tail, @function;
-dispatch_hhvm_tail: // stack alignment: cdecl
-    mov r14, rbx;
-    and r14, ((1 << QUICK_TLB_BITS) - 1) << QUICK_TLB_BITOFF;
-    cmp rbx, [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
-    jne 1f;
-    jmp [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
-    .align 16;
-1:  xor r14, r14; // zero patch data
-    jmp dispatch_hhvm_fullresolve;
-    .size dispatch_hhvm_tail, .-dispatch_hhvm_tail;
-
-    .align 16;
-    .global dispatch_hhvm_call;
-    .type dispatch_hhvm_call, @function;
-dispatch_hhvm_call: // stack alignment: hhvm
-    mov r14, rbx;
-    and r14, ((1 << QUICK_TLB_BITS) - 1) << QUICK_TLB_BITOFF;
-    cmp rbx, [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
-    jne 1f;
-    call [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
-    ret;
-    .align 16;
-1:  xor r14, r14; // zero patch data
-    call dispatch_hhvm_fullresolve;
-    ret;
-    .size dispatch_hhvm_call, .-dispatch_hhvm_call;
-
-    .align 16;
-    .global dispatch_hhvm;
-    .type dispatch_hhvm, @function;
-dispatch_hhvm:
-    mov r12, rdi; // cpu_regs
-    // Load HHVM registers
-    mov rbx, [r12 + 0 * 8];
-    mov rax, [r12 + 1 * 8];
-    mov rcx, [r12 + 2 * 8];
-    mov rdx, [r12 + 3 * 8];
-    mov rbp, [r12 + 4 * 8];
-    mov r15, [r12 + 5 * 8];
-    mov r13, [r12 + 6 * 8];
-    mov rsi, [r12 + 7 * 8];
-    mov rdi, [r12 + 8 * 8];
-    mov r8, [r12 + 9 * 8];
-    mov r9, [r12 + 10 * 8];
-    mov r10, [r12 + 11 * 8];
-    mov r11, [r12 + 12 * 8];
-
-    jmp 4f;
-
-    .align 16;
-    // This is the quick_tlb hot loop.
-2:  call [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET + 8];
-3:  mov r14, rbx;
-    and r14, ((1 << QUICK_TLB_BITS) - 1) << QUICK_TLB_BITOFF;
-    cmp rbx, [r12 + QUICK_TLB_IDXSCALE*r14 - CPU_STATE_REGDATA_OFFSET + CPU_STATE_QTLB_OFFSET];
-    je 2b;
-
-    // This code isn't exactly cold, but should be executed not that often.
-    // If we don't have addr in the quick_tlb, do a full resolve.
-4:  xor r14, r14; // zero patch data
-    call dispatch_hhvm_fullresolve;
-    jmp 3b;
-    .size dispatch_hhvm, .-dispatch_hhvm;
-
-    .att_syntax;
-);
 
 ASM_BLOCK(
     .intel_syntax noprefix;
@@ -468,12 +359,6 @@ dispatch_get(struct State* state) {
             .patch_data_reg = 6, // rsi
         },
 #if defined(__x86_64__)
-        [1] = {
-            .loop_func = dispatch_hhvm,
-            .quick_dispatch_func = (uintptr_t) dispatch_hhvm_tail,
-            .full_dispatch_func = (uintptr_t) dispatch_hhvm_fullresolve,
-            .patch_data_reg = 14, // r14
-        },
         [2] = {
             .loop_func = dispatch_regcall,
             .quick_dispatch_func = (uintptr_t) dispatch_regcall_tail,

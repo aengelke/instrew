@@ -114,10 +114,10 @@ private:
     void appendConfig(llvm::SmallVectorImpl<uint8_t>& buffer) const {
         struct {
             uint32_t version = 2;
-            uint8_t safeCallRet = safeCallRet;
-            uint8_t enableCallret = enableCallret;
-            uint8_t enableFastcc = enableFastcc;
-            uint8_t enablePIC = enablePIC;
+            uint8_t safeCallRet = ::safeCallRet;
+            uint8_t enableCallret = ::enableCallret;
+            uint8_t enableFastcc = ::enableFastcc;
+            uint8_t enablePIC = ::enablePIC;
 
             uint32_t guestArch;
             uint32_t hostArch;
@@ -204,19 +204,10 @@ public:
                                                   llvm::Type::getInt64Ty(ctx));
 
         mod = std::make_unique<llvm::Module>("mod", ctx);
-#if LL_LLVM_MAJOR >= 13
         if (iwsc->tsc_stack_alignment != 0)
             mod->setOverrideStackAlignment(iwsc->tsc_stack_alignment);
-#endif
-#if LL_LLVM_MAJOR >= 19 && LL_LLVM_MAJOR < 21
-        mod->setIsNewDbgInfoFormat(true);
-#endif
 
-#if LL_LLVM_MAJOR < 17
-        mod->getGlobalList().push_back(pc_base_var);
-#else
         mod->insertGlobalVariable(pc_base_var);
-#endif
         for (const auto& helper_fn : helper_fns)
             mod->getFunctionList().push_back(helper_fn);
 

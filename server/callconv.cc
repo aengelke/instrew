@@ -21,14 +21,6 @@
 
 
 CallConv GetFastCC(int host_arch, int guest_arch) {
-#if LL_LLVM_MAJOR < 17
-    if (host_arch == EM_X86_64 && guest_arch == EM_X86_64)
-        return CallConv::HHVM;
-    if (host_arch == EM_X86_64 && guest_arch == EM_RISCV)
-        return CallConv::RV64_X86_HHVM;
-    if (host_arch == EM_X86_64 && guest_arch == EM_AARCH64)
-        return CallConv::AARCH64_X86_HHVM;
-#endif
     if (host_arch == EM_X86_64 && guest_arch == EM_X86_64)
         return CallConv::X86_X86_REGCALL;
     if (host_arch == EM_X86_64 && guest_arch == EM_RISCV)
@@ -45,11 +37,6 @@ CallConv GetFastCC(int host_arch, int guest_arch) {
 int GetCallConvClientNumber(CallConv cc) {
     switch (cc) {
     case CallConv::CDECL: return 0;
-#if LL_LLVM_MAJOR < 17
-    case CallConv::HHVM: return 1;
-    case CallConv::RV64_X86_HHVM: return 1;
-    case CallConv::AARCH64_X86_HHVM: return 1;
-#endif
     case CallConv::X86_X86_REGCALL: return 2;
     case CallConv::RV64_X86_REGCALL: return 2;
     case CallConv::AARCH64_X86_REGCALL: return 2;
@@ -296,7 +283,6 @@ struct CCState {
     void UpdateCallRet(llvm::Instruction* callret, FoldedStores& vals) {
         llvm::IRBuilder<> irb(callret);
         auto ret_ty = llvm::cast<llvm::StructType>(nfn->getReturnType());
-        unsigned sptr_as = sptr->getType()->getPointerAddressSpace();
         for (unsigned i = 0; i < fields.size(); i++) {
             llvm::Type* elem_ty = ret_ty->getElementType(fields[i].retidx);
             if (vals[i]) {
@@ -344,47 +330,8 @@ struct CCState {
                 unsigned idx_u = static_cast<unsigned>(sptr_ret_idx);
                 ret_val = irb.CreateInsertValue(ret_val, sptr, {idx_u});
             }
-            uint32_t rv_set = 0;
-            for (unsigned i = 0; i < fields.size(); i++) {
+            for (unsigned i = 0; i < fields.size(); i++)
                 ret_val = irb.CreateInsertValue(ret_val, vals[i], {fields[i].retidx});
-                rv_set |= 1 << fields[i].retidx;
-            }
-#if LL_LLVM_MAJOR < 17
-            // This is an *EXTREMELY UGLY HACK* to work around some bugs in LLVM
-            // when RBP is a parameter register. So first of all, we lowered the
-            // stack alignment to 8, because HHVMCC functions cannot be called
-            // due to the skewed stack alignment (Bug 1). Some code needs stack
-            // stack realignments. The HHVMCC uses RBP for parameters/return
-            // values, but stack realignment routines use RBP to hold the old
-            // stack pointer value unconditionally. This leads to broken code:
-            //
-            //     push rbp; mov rbp, rsp; and rsp, -16; ...
-            //     (parameter is now clobbered/gone -- whoops!)
-            //     (rbp is modified, trashing the old RSP -- whoops!)
-            //     ...; mov rsp, rbp; pop rbp; ret
-            // (Bug 2)
-            //
-            // Disabling that with "no-realign-stack" doesn't work either,
-            // because lowering some instructions (e.g., extractelement with a
-            // variable index) simply assumes a suitably aligned stack (Bug 3).
-            //
-            // Now the options to work around this situation are:
-            // - Inlineasm for calls containing "sub rsp, 8; call; add rsp 8"
-            //   (not good for performance)
-            // - Not generating code that needs stack alignment (impossible)
-            // - Implementing proper support for custom CCs upstream (hard work)
-            // - Fixing any of the LLVM bugs mentioned above.
-            //   (consequence: Instrew would need a patched LLVM to work)
-            // - Always returning the original RBP to emulate a callee-saved reg
-            //   (this is what we do here)
-            //
-            // For now, we do this only for AArch64 guests, the problem wasn't
-            // encountered with other guest architectures.
-            //
-            // RBP is parameter (zero-indexed) 2 and return index 1.
-            if (nfn->getCallingConv() == llvm::CallingConv::HHVM && !(rv_set & 2))
-                ret_val = irb.CreateInsertValue(ret_val, nfn->arg_begin() + 2, {1});
-#endif
             irb.CreateRet(ret_val);
         }
 
@@ -439,12 +386,8 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         nfn = llvm::Function::Create(fn_ty, linkage, fn->getName() + "_aapcsx", mod);
         nfn->copyAttributesFrom(fn);
         llvm::AttributeList al = nfn->getAttributes();
-#if LL_LLVM_MAJOR < 14
-        al = al.addParamAttributes(ctx, 8, al.getParamAttributes(0));
-#else
         llvm::AttrBuilder ab(ctx, al.getParamAttrs(0));
         al = al.addParamAttributes(ctx, 8, ab);
-#endif
         nfn->setAttributes(al.removeParamAttributes(ctx, 0));
         nfn->addParamAttr(8, llvm::Attribute::SwiftSelf);
         sptr = &nfn->arg_begin()[8];
@@ -498,12 +441,8 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         nfn = llvm::Function::Create(fn_ty, linkage, fn->getName() + "_regcall", mod);
         nfn->copyAttributesFrom(fn);
         llvm::AttributeList al = nfn->getAttributes();
-#if LL_LLVM_MAJOR < 14
-        al = al.addParamAttributes(ctx, 0, al.getParamAttributes(0));
-#else
         llvm::AttrBuilder ab(ctx, al.getParamAttrs(0));
         al = al.addParamAttributes(ctx, 0, ab);
-#endif
         nfn->setAttributes(al.removeParamAttributes(ctx, 0));
         nfn->setCallingConv(llvm::CallingConv::X86_RegCall);
         sptr = &nfn->arg_begin()[0];
@@ -552,99 +491,6 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
         fieldmap = &regcall_fieldmap;
         goto callconv_regcall_common;
     }
-#if LL_LLVM_MAJOR < 17
-    case CallConv::HHVM: {
-        static constexpr SptrField hhvm_fields[] = {
-            { SptrFields::x86_64::RIP, 0,  0  },
-            { SptrFields::x86_64::RAX, 10, 8  },
-            { SptrFields::x86_64::RCX, 7,  5  },
-            { SptrFields::x86_64::RDX, 6,  4  },
-            // TBD: determine whether we can safely map to RBP
-            { SptrFields::x86_64::RBX, 2,  1  },
-            { SptrFields::x86_64::RSP, 3,  13 },
-            { SptrFields::x86_64::RBP, 13, 11 },
-            { SptrFields::x86_64::RSI, 5,  3  },
-            { SptrFields::x86_64::RDI, 4,  2  },
-            { SptrFields::x86_64::R8,  8,  6  },
-            { SptrFields::x86_64::R9,  9,  7  },
-            { SptrFields::x86_64::R10, 11, 9  },
-            { SptrFields::x86_64::R11, 12, 10 },
-        };
-        static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
-        fields = hhvm_fields;
-        fieldmap = &hhvm_fieldmap;
-    callconv_hhvm_common:
-        ret_ty = llvm::StructType::get(i64, i64, i64, i64, i64, i64, i64,
-                                       i64, i64, i64, i64, i64, i64, i64);
-        fn_ty = llvm::FunctionType::get(ret_ty,
-                {i64, sptr_ty, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64,
-                 i64, i64}, false);
-
-        nfn = llvm::Function::Create(fn_ty, linkage, fn->getName() + "_hhvm", mod);
-        nfn->copyAttributesFrom(fn);
-        llvm::AttributeList al = nfn->getAttributes();
-#if LL_LLVM_MAJOR < 14
-        al = al.addParamAttributes(ctx, 1, al.getParamAttributes(0));
-#else
-        llvm::AttrBuilder ab(ctx, al.getParamAttrs(0));
-        al = al.addParamAttributes(ctx, 1, ab);
-#endif
-        nfn->setAttributes(al.removeParamAttributes(ctx, 0));
-        nfn->setCallingConv(llvm::CallingConv::HHVM);
-        sptr = &nfn->arg_begin()[1];
-
-        if (call_fn_cdecl) {
-            tail_fn = llvm::cast<llvm::Function>(mod->getOrInsertFunction("instrew_tail_hhvm", fn_ty).getCallee());
-            tail_fn->copyAttributesFrom(nfn);
-            call_fn = llvm::cast<llvm::Function>(mod->getOrInsertFunction("instrew_call_hhvm", fn_ty).getCallee());
-            call_fn->copyAttributesFrom(nfn);
-        }
-        break;
-    }
-    case CallConv::RV64_X86_HHVM: {
-        static constexpr SptrField hhvm_fields[] = {
-            { SptrFields::rv64::RIP, 0,  0  },
-            { SptrFields::rv64::X18, 10, 8  },
-            { SptrFields::rv64::X1,  7,  5  },
-            { SptrFields::rv64::X2,  6,  4  }, // sp; has to be at this index due to initialization
-            // TBD: determine whether we can safely map to RBP
-            { SptrFields::rv64::X8,  2,  1  },
-            { SptrFields::rv64::X9,  3,  13 },
-            { SptrFields::rv64::X10, 13, 11 },
-            { SptrFields::rv64::X11, 5,  3  },
-            { SptrFields::rv64::X12, 4,  2  },
-            { SptrFields::rv64::X13, 8,  6  },
-            { SptrFields::rv64::X14, 9,  7  },
-            { SptrFields::rv64::X15, 11, 9  },
-            { SptrFields::rv64::X17, 12, 10 },
-        };
-        static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
-        fields = hhvm_fields;
-        fieldmap = &hhvm_fieldmap;
-        goto callconv_hhvm_common;
-    }
-    case CallConv::AARCH64_X86_HHVM: {
-        static constexpr SptrField hhvm_fields[] = {
-            { SptrFields::aarch64::PC,  0,  0  },
-            { SptrFields::aarch64::X0,  10, 8  },
-            { SptrFields::aarch64::X1,  7,  5  },
-            { SptrFields::aarch64::X2,  6,  4  },
-            // Can't map to RBP (2,1), see above for a detailed discussion
-            { SptrFields::aarch64::X3,  3,  13 },
-            { SptrFields::aarch64::X4,  13, 11 },
-            { SptrFields::aarch64::X5,  5,  3  },
-            { SptrFields::aarch64::X6,  4,  2  },
-            { SptrFields::aarch64::X7,  8,  6  },
-            { SptrFields::aarch64::X8,  9,  7  },
-            { SptrFields::aarch64::X30, 11, 9  },
-            { SptrFields::aarch64::X9,  12, 10 }, // TODO: map SP
-        };
-        static const constexpr SptrFieldMap hhvm_fieldmap = CreateSptrMap(hhvm_fields);
-        fields = hhvm_fields;
-        fieldmap = &hhvm_fieldmap;
-        goto callconv_hhvm_common;
-    }
-#endif
     case CallConv::CDECL:
     default:
         assert(false && "unsupported Instrew calling convention!");
@@ -662,11 +508,7 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
             bbs.push_back(&bb);
         for (llvm::BasicBlock* bb : bbs) {
             bb->removeFromParent();
-#if LL_LLVM_MAJOR < 16
-            nfn->getBasicBlockList().push_back(bb);
-#else
             nfn->insert(nfn->end(), bb);
-#endif
         }
     }
     fn->arg_begin()[0].replaceAllUsesWith(sptr);
@@ -691,7 +533,8 @@ llvm::Function* ChangeCallConv(llvm::Function* fn, CallConv cc) {
             llvm::SmallVector<llvm::Value*, 16> args;
             for (llvm::Type* ty : fn_ty->params())
                 args.push_back(llvm::UndefValue::get(ty));
-            auto newcall = llvm::CallInst::Create(fn_ty, tgt, args, "", call);
+            auto newcall = llvm::CallInst::Create(fn_ty, tgt, args, "",
+                                                  call->getIterator());
             newcall->setTailCallKind(call->getTailCallKind());
             newcall->setCallingConv(tgt->getCallingConv());
             newcall->setAttributes(tgt->getAttributes());
@@ -786,7 +629,7 @@ end_escape:
             continue;
         if (llvm::CallInst* tailcall = bb.getTerminatingMustTailCall()) {
             if (!tailcall->getType()->isVoidTy()) {
-                llvm::ReturnInst::Create(ctx, tailcall, ret);
+                llvm::ReturnInst::Create(ctx, tailcall, ret->getIterator());
                 ret->eraseFromParent();
             }
             continue;
@@ -812,7 +655,7 @@ end_escape:
             llvm::BasicBlock* bb = callret->getParent();
             if (!last_producer.try_emplace(bb, callret).second)
                 assert(false && "multiple producer in single block");
-            llvm::IRBuilder<> irb(bb->getFirstNonPHI());
+            llvm::IRBuilder<> irb(bb, bb->getFirstNonPHIIt());
             for (unsigned i = 0; i < fields.size(); i++) {
                 if (vals[i])
                     continue;
@@ -849,7 +692,7 @@ end_escape:
                 if (parent_phi != phimap.end()) {
                     phi->addIncoming(parent_phi->second, pred);
                 } else {
-                    irb.SetInsertPoint(pred->getFirstNonPHI());
+                    irb.SetInsertPoint(pred, pred->getFirstNonPHIIt());
                     llvm::Type* elem_ty = ret_ty->getElementType(fields[fieldidx].retidx);
                     auto nphi = irb.CreatePHI(elem_ty, 2);
                     phimap[std::make_pair(pred, fieldidx)] = nphi;
